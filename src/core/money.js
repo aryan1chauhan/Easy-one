@@ -23,8 +23,13 @@ function parseFixed2(input, maxScaled, invalidError, overflowError) {
   if (typeof input !== 'string' && typeof input !== 'number') {
     return { valid: false, scaled: null, error: invalidError };
   }
-  if (typeof input === 'number' && !Number.isFinite(input)) {
-    return { valid: false, scaled: null, error: invalidError };
+  if (typeof input === 'number') {
+    if (!Number.isFinite(input) || Object.is(input, -0) || input < 0) {
+      return { valid: false, scaled: null, error: invalidError };
+    }
+    if (Math.trunc(input) > Math.floor(maxScaled / 100)) {
+      return { valid: false, scaled: null, error: overflowError };
+    }
   }
 
   const trimmed = String(input).trim();
@@ -56,7 +61,8 @@ function parseFixed2(input, maxScaled, invalidError, overflowError) {
  * @param {{ allowZero?: boolean }} [options]
  * @returns {{ valid: boolean, paise: number | null, error: string | null }}
  */
-export function parseRupeesToPaise(input, { allowZero = false } = {}) {
+export function parseRupeesToPaise(input, options) {
+  const allowZero = Boolean(options?.allowZero);
   const invalidMsg = allowZero
     ? 'Enter a valid amount with at most 2 decimal places.'
     : 'Enter a valid positive amount with at most 2 decimal places.';
@@ -107,7 +113,8 @@ export function parsePercentToBps(input) {
  * @param {{ signed?: boolean }} [options]
  * @returns {string}
  */
-export function formatRupees(paise, { signed = false } = {}) {
+export function formatRupees(paise, options) {
+  const signed = Boolean(options?.signed);
   if (!Number.isSafeInteger(paise)) {
     throw new TypeError(`Expected safe integer paise, received: ${paise}`);
   }
@@ -156,6 +163,9 @@ export function distributeEqual(amountPaise, memberIds) {
   if (!Array.isArray(memberIds) || memberIds.length === 0) {
     throw new TypeError('memberIds must be a non-empty array.');
   }
+  if (memberIds.some((id) => typeof id !== 'string' || !id)) {
+    throw new TypeError('Each memberId must be a non-empty string.');
+  }
   if (new Set(memberIds).size !== memberIds.length) {
     throw new Error('memberIds must not contain duplicates.');
   }
@@ -182,6 +192,9 @@ export function distributePercentage(amountPaise, entries) {
   if (!Number.isSafeInteger(amountPaise) || amountPaise < 0) {
     throw new TypeError(`Expected non-negative integer amountPaise, received: ${amountPaise}`);
   }
+  if (amountPaise > Math.floor(Number.MAX_SAFE_INTEGER / TOTAL_BPS)) {
+    throw new RangeError('amountPaise exceeds safe percentage scaling limit.');
+  }
   if (!Array.isArray(entries) || entries.length === 0) {
     throw new TypeError('entries must be a non-empty array.');
   }
@@ -190,7 +203,7 @@ export function distributePercentage(amountPaise, entries) {
   const seenIds = new Set();
 
   const preliminary = entries.map((entry, index) => {
-    if (!entry || typeof entry.memberId !== 'string' || seenIds.has(entry.memberId)) {
+    if (!entry || typeof entry.memberId !== 'string' || !entry.memberId || seenIds.has(entry.memberId)) {
       throw new Error('Invalid or duplicate memberId in percentage entries.');
     }
     if (!Number.isSafeInteger(entry.bps) || entry.bps < 0) {

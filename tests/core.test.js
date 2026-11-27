@@ -427,4 +427,166 @@ test('E-12, E-13, E-14: percentage split basis points, Hamilton method, and dete
   ]);
 });
 
+// ---------------------------------------------------------------------------
+// Extended Defensive, Boundary & Contract Coverage (Phase 1 Audit)
+// ---------------------------------------------------------------------------
+
+test('Money defensive edges: null options, -0, 1e21 overflow, Indian grouping & throws', () => {
+  assert.deepEqual(parseRupeesToPaise('10', null), { valid: true, paise: 1000, error: null });
+  assert.deepEqual(parseRupeesToPaise('10000000.00'), { valid: true, paise: MAX_AMOUNT_PAISE, error: null });
+  assert.deepEqual(parseRupeesToPaise('0010000000.00'), { valid: true, paise: MAX_AMOUNT_PAISE, error: null });
+  assert.equal(parseRupeesToPaise(-0, { allowZero: true }).valid, false);
+  assert.equal(parseRupeesToPaise(1e21).error, 'Amount exceeds the maximum allowed limit.');
+
+  assert.equal(formatRupees(100, null), '₹1');
+  assert.equal(formatRupees(100000), '₹1,000');
+  assert.equal(formatRupees(1000000000), '₹1,00,00,000');
+  assert.throws(() => formatRupees(12.5), TypeError);
+  assert.throws(() => formatRupees(NaN), TypeError);
+
+  assert.deepEqual(parsePercentToBps('0'), { valid: true, bps: 0, error: null });
+  assert.deepEqual(parsePercentToBps('100.00'), { valid: true, bps: 10000, error: null });
+  assert.deepEqual(parsePercentToBps('0.01'), { valid: true, bps: 1, error: null });
+  assert.equal(parsePercentToBps('10.125').valid, false);
+  assert.equal(parsePercentToBps(-0).valid, false);
+
+  assert.throws(() => distributeEqual(-1, ['m1']), TypeError);
+  assert.throws(() => distributeEqual(10.5, ['m1']), TypeError);
+  assert.throws(() => distributeEqual(100, []), TypeError);
+  assert.throws(() => distributeEqual(100, ['m1', '']), TypeError);
+  assert.throws(() => distributeEqual(100, ['m1', 'm1']), Error);
+
+  assert.throws(() => distributePercentage(100, []), TypeError);
+  assert.throws(() => distributePercentage(100, [{ memberId: 'm1', bps: 5000 }]), Error);
+  assert.throws(() => distributePercentage(100, [{ memberId: 'm1', bps: 5000 }, { memberId: 'm1', bps: 5000 }]), Error);
+  assert.throws(() => distributePercentage(100, [{ memberId: 'm1', bps: -1 }]), TypeError);
+  assert.throws(
+    () => distributePercentage(10000000000003, [{ memberId: 'm1', bps: 3333 }, { memberId: 'm2', bps: 6667 }]),
+    RangeError
+  );
+});
+
+test('Member validators defensive edges: malformed inputs, missing member, un-normalized state', () => {
+  assert.equal(validateAddMember('Rahul', null).valid, true);
+  assert.equal(validateAddMember('Rahul', {}).valid, true);
+  assert.equal(validateAddMember('Rahul Verma', [null, { id: 'm1', name: 'rahul   verma' }]).valid, false);
+
+  assert.deepEqual(validateRemoveMember('missing', { members: makeMembers(['Rahul']) }), {
+    valid: false,
+    error: 'Member not found.',
+  });
+  assert.equal(validateRemoveMember(undefined, { members: [{ name: 'Bad' }] }).valid, false);
+  assert.equal(validateRemoveMember('m1', { members: 'bad', expenses: null, settlements: {} }).valid, false);
+  assert.equal(validateRemoveMember('m1', { members: [null, { id: 'm1', name: 'Rahul' }] }).valid, true);
+});
+
+test('Expense validator defensive & split paths: parsed shape, invalid fields, prototype safety', () => {
+  const members = makeMembers(['Rahul', 'Priya', 'Aman']);
+
+  // Default splitType & title trimming
+  const okDefault = validateExpenseInput(
+    { title: '  Dinner  ', amount: '300', paidBy: 'm1', splitAmong: ['m1', 'm1', 'm2'] },
+    members
+  );
+  assert.equal(okDefault.valid, true);
+  assert.deepEqual(okDefault.parsed, {
+    title: 'Dinner',
+    amountPaise: 30000,
+    paidBy: 'm1',
+    splitType: 'equal',
+    shares: [
+      { memberId: 'm1', sharePaise: 15000 },
+      { memberId: 'm2', sharePaise: 15000 },
+    ],
+  });
+
+  // Invalid paidBy, splitType, non-existent/undefined splitAmong, invalid amount, null payload
+  assert.equal(validateExpenseInput(null, members).valid, false);
+  assert.equal(
+    validateExpenseInput({ title: 'T', amount: '10', paidBy: 'missing', splitAmong: ['m1'] }, members).error,
+    'Select a valid member who paid.'
+  );
+  assert.equal(
+    validateExpenseInput({ title: 'T', amount: '10', paidBy: 'm1', splitAmong: ['missing'] }, members).error,
+    'Split includes an invalid member.'
+  );
+  assert.equal(
+    validateExpenseInput({ title: 'T', amount: '10', paidBy: 'm1', splitAmong: ['m1'], splitType: null }, members).error,
+    'Invalid split mode.'
+  );
+  assert.equal(
+    validateExpenseInput({ title: 'T', amount: '0', paidBy: 'm1', splitAmong: ['m1'] }, members).error,
+    'Amount must be greater than ₹0.'
+  );
+
+  // Exact split invalid share & prototype key collision safety & fractional paisa exact sum
+  const badExact = validateExpenseInput(
+    {
+      title: 'T',
+      amount: '100',
+      paidBy: 'm1',
+      splitType: 'exact',
+      splitAmong: ['m1', 'm2'],
+      shareValues: { m1: '100', m2: '-5' },
+    },
+    members
+  );
+  assert.equal(badExact.valid, false);
+  assert.match(badExact.error, /^Invalid exact share for Priya:/);
+
+  const protoMember = [{ id: 'toString', name: 'Proto' }, { id: 'm2', name: 'Priya' }];
+  assert.equal(
+    validateExpenseInput(
+      { title: 'T', amount: '100', paidBy: 'm2', splitType: 'exact', splitAmong: ['toString', 'm2'], shareValues: {} },
+      protoMember
+    ).valid,
+    false
+  );
+
+  const fractionalExact = validateExpenseInput(
+    {
+      title: 'Split',
+      amount: '100',
+      paidBy: 'm1',
+      splitType: 'exact',
+      splitAmong: ['m1', 'm2', 'm3'],
+      shareValues: { m1: '33.34', m2: '33.33', m3: '33.33' },
+    },
+    members
+  );
+  assert.equal(fractionalExact.valid, true);
+
+  // Percentage split: 0% share allowed, invalid entry rejected
+  const zeroPct = validateExpenseInput(
+    {
+      title: 'Treat',
+      amount: '250',
+      paidBy: 'm1',
+      splitType: 'percentage',
+      splitAmong: ['m1', 'm2'],
+      shareValues: { m1: '100', m2: '0' },
+    },
+    members
+  );
+  assert.equal(zeroPct.valid, true);
+  assert.deepEqual(zeroPct.parsed.shares, [
+    { memberId: 'm1', sharePaise: 25000, percent: 100 },
+    { memberId: 'm2', sharePaise: 0, percent: 0 },
+  ]);
+
+  const badPct = validateExpenseInput(
+    {
+      title: 'Treat',
+      amount: '250',
+      paidBy: 'm1',
+      splitType: 'percentage',
+      splitAmong: ['m1', 'm2'],
+      shareValues: { m1: '100', m2: '33.333' },
+    },
+    members
+  );
+  assert.equal(badPct.valid, false);
+  assert.match(badPct.error, /^Invalid percentage for Priya:/);
+});
+
 console.log(`\nPhase 1 core tests complete: ${passed} passed, 0 failed.`);

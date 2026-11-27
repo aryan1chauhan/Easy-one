@@ -19,6 +19,17 @@ export const MAX_MEMBER_NAME_LENGTH = 40;
 
 const VALID_SPLIT_TYPES = new Set(['equal', 'exact', 'percentage']);
 
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function getOwnShareValue(shareValues, memberId) {
+  if (!shareValues || typeof shareValues !== 'object' || Array.isArray(shareValues)) {
+    return undefined;
+  }
+  return Object.hasOwn(shareValues, memberId) ? shareValues[memberId] : undefined;
+}
+
 /**
  * Trims surrounding whitespace and collapses repeated internal whitespace.
  *
@@ -40,6 +51,7 @@ export function normalizeMemberName(rawName) {
  * @returns {{ valid: boolean, error: string | null, normalizedName: string }}
  */
 export function validateAddMember(rawName, existingMembers = []) {
+  const members = asArray(existingMembers);
   const normalizedName = normalizeMemberName(rawName);
 
   if (!normalizedName) {
@@ -54,7 +66,7 @@ export function validateAddMember(rawName, existingMembers = []) {
     };
   }
 
-  if (existingMembers.length >= MAX_MEMBERS) {
+  if (members.length >= MAX_MEMBERS) {
     return {
       valid: false,
       error: `Maximum ${MAX_MEMBERS} members allowed per group.`,
@@ -63,7 +75,11 @@ export function validateAddMember(rawName, existingMembers = []) {
   }
 
   const lower = normalizedName.toLowerCase();
-  const isDuplicate = existingMembers.some((member) => member.name.toLowerCase() === lower);
+  const isDuplicate = members.some(
+    (member) =>
+      typeof member?.name === 'string' &&
+      normalizeMemberName(member.name).toLowerCase() === lower
+  );
   if (isDuplicate) {
     return {
       valid: false,
@@ -83,19 +99,23 @@ export function validateAddMember(rawName, existingMembers = []) {
  * @returns {{ valid: boolean, error: string | null }}
  */
 export function validateRemoveMember(memberId, state) {
-  const members = state?.members ?? [];
-  const expenses = state?.expenses ?? [];
-  const settlements = state?.settlements ?? [];
+  if (typeof memberId !== 'string' || !memberId) {
+    return { valid: false, error: 'Member not found.' };
+  }
 
-  const member = members.find((m) => m.id === memberId);
+  const members = asArray(state?.members);
+  const expenses = asArray(state?.expenses);
+  const settlements = asArray(state?.settlements);
+
+  const member = members.find((m) => m?.id === memberId);
   if (!member) {
     return { valid: false, error: 'Member not found.' };
   }
 
   const hasExpenses = expenses.some(
     (expense) =>
-      expense.paidBy === memberId ||
-      (expense.shares ?? []).some((share) => share.memberId === memberId)
+      expense?.paidBy === memberId ||
+      asArray(expense?.shares).some((share) => share?.memberId === memberId)
   );
   if (hasExpenses) {
     return {
@@ -105,7 +125,7 @@ export function validateRemoveMember(memberId, state) {
   }
 
   const hasSettlements = settlements.some(
-    (settlement) => settlement.fromId === memberId || settlement.toId === memberId
+    (settlement) => settlement?.fromId === memberId || settlement?.toId === memberId
   );
   if (hasSettlements) {
     return {
@@ -131,7 +151,7 @@ function validateExactShares(amountPaise, splitAmong, shareValues, memberMap) {
   let sumPaise = 0;
 
   for (const memberId of splitAmong) {
-    const raw = shareValues?.[memberId];
+    const raw = getOwnShareValue(shareValues, memberId);
     const parsed = parseRupeesToPaise(raw, { allowZero: true });
     if (!parsed.valid) {
       const name = memberMap.get(memberId)?.name ?? memberId;
@@ -166,7 +186,7 @@ function validatePercentageShares(amountPaise, splitAmong, shareValues, memberMa
   let totalBps = 0;
 
   for (const memberId of splitAmong) {
-    const raw = shareValues?.[memberId];
+    const raw = getOwnShareValue(shareValues, memberId);
     const parsed = parsePercentToBps(raw);
     if (!parsed.valid) {
       const name = memberMap.get(memberId)?.name ?? memberId;
@@ -216,7 +236,14 @@ function validatePercentageShares(amountPaise, splitAmong, shareValues, memberMa
  * }}
  */
 export function validateExpenseInput(payload, members = []) {
-  if (!Array.isArray(members) || members.length < MIN_MEMBERS_FOR_EXPENSE) {
+  const memberMap = new Map();
+  for (const member of asArray(members)) {
+    if (member && typeof member.id === 'string' && member.id) {
+      memberMap.set(member.id, member);
+    }
+  }
+
+  if (memberMap.size < MIN_MEMBERS_FOR_EXPENSE) {
     return {
       valid: false,
       error: `Add at least ${MIN_MEMBERS_FOR_EXPENSE} members to start adding expenses.`,
@@ -233,7 +260,6 @@ export function validateExpenseInput(payload, members = []) {
     return { valid: false, error: amountResult.error };
   }
 
-  const memberMap = new Map(members.map((m) => [m.id, m]));
   if (typeof payload?.paidBy !== 'string' || !memberMap.has(payload.paidBy)) {
     return { valid: false, error: 'Select a valid member who paid.' };
   }
@@ -242,11 +268,11 @@ export function validateExpenseInput(payload, members = []) {
   if (splitAmong.length === 0) {
     return { valid: false, error: 'Select at least one member to split among.' };
   }
-  if (splitAmong.some((id) => !memberMap.has(id))) {
+  if (splitAmong.some((id) => typeof id !== 'string' || !memberMap.has(id))) {
     return { valid: false, error: 'Split includes an invalid member.' };
   }
 
-  const splitType = payload?.splitType ?? 'equal';
+  const splitType = payload?.splitType === undefined ? 'equal' : payload.splitType;
   if (!VALID_SPLIT_TYPES.has(splitType)) {
     return { valid: false, error: 'Invalid split mode.' };
   }
