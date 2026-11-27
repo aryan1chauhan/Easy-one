@@ -62,7 +62,7 @@ export function normalizePhoneE164(rawPhone) {
   return `+${trimmed}`;
 }
 
-function formatAuthError(err) {
+function formatAuthError(err, method = 'default') {
   const code = err?.code ?? '';
   switch (code) {
     case 'auth/popup-closed-by-user':
@@ -72,7 +72,10 @@ function formatAuthError(err) {
     case 'auth/unauthorized-domain':
       return 'This domain must be added under Firebase Console → Authentication → Settings → Authorized domains.';
     case 'auth/operation-not-allowed':
-      return 'This sign-in provider is not enabled yet in Firebase Authentication Console.';
+      if (method === 'phone') {
+        return 'Phone OTP sign-in is currently unavailable. Please continue with Google or Email & Password.';
+      }
+      return 'This sign-in method is currently unavailable. Please try another option.';
     case 'auth/invalid-email':
       return 'Enter a valid email / Gmail address.';
     case 'auth/invalid-credential':
@@ -345,7 +348,7 @@ export function createCloudSync({ store, onStatusChange }) {
         }
         recaptchaVerifier = null;
       }
-      return { ok: false, error: formatAuthError(err) };
+      return { ok: false, error: formatAuthError(err, 'phone') };
     }
   }
 
@@ -362,7 +365,7 @@ export function createCloudSync({ store, onStatusChange }) {
       confirmationResult = null;
       return { ok: true, error: null };
     } catch (err) {
-      return { ok: false, error: formatAuthError(err) };
+      return { ok: false, error: formatAuthError(err, 'phone') };
     }
   }
 
