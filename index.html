@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Expense Splitter</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./styles/main.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand-group">
+        <h1 class="app-title">Expense Splitter</h1>
+        <span id="member-count-badge" class="badge badge-neutral">0 / 10 members</span>
+      </div>
+      <button id="reset-group-btn" type="button" class="btn btn-danger-outline">
+        Reset group
+      </button>
+    </div>
+  </header>
+
+  <div id="storage-banner" class="storage-banner" role="status" aria-live="polite" hidden>
+    <span id="storage-banner-text"></span>
+    <button id="storage-banner-dismiss" type="button" class="btn-icon" aria-label="Dismiss storage notice">
+      ×
+    </button>
+  </div>
+
+  <main class="dashboard">
+    <div class="col-left">
+      <section id="members-section" class="card" aria-labelledby="members-heading">
+        <div class="card-header">
+          <h2 id="members-heading" class="card-title">Group Members</h2>
+          <span class="helper-meta">2 to 10 people</span>
+        </div>
+        <div id="members-root"></div>
+      </section>
+
+      <section id="expense-form-section" class="card" aria-labelledby="expense-form-heading">
+        <div class="card-header">
+          <h2 id="expense-form-heading" class="card-title">Add Expense</h2>
+        </div>
+        <div id="expense-form-root"></div>
+      </section>
+    </div>
+
+    <div class="col-right">
+      <section id="balances-section" class="card" aria-labelledby="balances-heading">
+        <div class="card-header">
+          <h2 id="balances-heading" class="card-title">Balances</h2>
+          <span id="balances-total-badge" class="badge badge-neutral">Total: ₹0</span>
+        </div>
+        <div id="balances-root"></div>
+      </section>
+
+      <section id="settle-up-section" class="card" aria-labelledby="settle-up-heading">
+        <div class="card-header">
+          <h2 id="settle-up-heading" class="card-title">Settle Up</h2>
+          <span id="settle-count-badge" class="badge badge-neutral">0 payments</span>
+        </div>
+        <div id="settle-up-root"></div>
+      </section>
+
+      <section id="expense-list-section" class="card" aria-labelledby="expense-list-heading">
+        <div class="card-header expense-list-header">
+          <h2 id="expense-list-heading" class="card-title">Expense History</h2>
+          <div id="expense-filter-slot"></div>
+        </div>
+        <div id="expense-list-root"></div>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="reset-dialog" class="modal-dialog" aria-labelledby="reset-dialog-title" aria-describedby="reset-dialog-desc">
+    <div class="modal-content">
+      <h2 id="reset-dialog-title" class="modal-title">Reset group?</h2>
+      <p id="reset-dialog-desc" class="modal-body">
+        This permanently clears all members, expenses, and recorded settlements from this browser.
+      </p>
+      <div class="modal-actions">
+        <button id="reset-cancel-btn" type="button" class="btn btn-secondary">Cancel</button>
+        <button id="reset-confirm-btn" type="button" class="btn btn-danger">Yes, Reset Group</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
