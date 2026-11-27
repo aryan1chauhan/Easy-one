@@ -8,6 +8,7 @@
  */
 
 const FIREBASE_SDK_BASE = 'https://www.gstatic.com/firebasejs/11.6.0';
+const VERCEL_PROXY_HOST = 'easy-one-coral.vercel.app';
 
 const FIREBASE_CONFIG = {
   projectId: 'rupeesync-split-2026',
@@ -17,6 +18,10 @@ const FIREBASE_CONFIG = {
   authDomain: 'rupeesync-split-2026.firebaseapp.com',
   messagingSenderId: '1027025841290',
 };
+
+export function resolveAuthDomain(host = typeof window !== 'undefined' ? window.location?.host ?? '' : '') {
+  return host === VERCEL_PROXY_HOST ? VERCEL_PROXY_HOST : FIREBASE_CONFIG.authDomain;
+}
 
 let sdkCache = null;
 let sdkPromise = null;
@@ -32,7 +37,8 @@ function loadFirebaseSdk() {
       import(`${FIREBASE_SDK_BASE}/firebase-firestore.js`),
     ])
       .then(([appMod, authMod, fsMod]) => {
-        const app = appMod.getApps().length > 0 ? appMod.getApp() : appMod.initializeApp(FIREBASE_CONFIG);
+        const config = { ...FIREBASE_CONFIG, authDomain: resolveAuthDomain() };
+        const app = appMod.getApps().length > 0 ? appMod.getApp() : appMod.initializeApp(config);
         const auth = authMod.getAuth(app);
         const db = fsMod.getFirestore(app);
         sdkCache = { app, auth, db, authMod, fsMod };
@@ -97,12 +103,14 @@ function writeRedirectPendingFlag(active) {
   }
 }
 
-function isSameOriginAuthHost() {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  const host = window.location?.hostname ?? '';
-  return host === FIREBASE_CONFIG.authDomain || host === `${FIREBASE_CONFIG.projectId}.web.app`;
+export function isSameOriginAuthHost(
+  host = typeof window !== 'undefined' ? window.location?.hostname ?? '' : ''
+) {
+  return (
+    host === FIREBASE_CONFIG.authDomain ||
+    host === `${FIREBASE_CONFIG.projectId}.web.app` ||
+    host === VERCEL_PROXY_HOST
+  );
 }
 
 /**

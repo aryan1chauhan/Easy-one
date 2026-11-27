@@ -10,7 +10,11 @@ import {
   saveActivity,
   saveState,
 } from '../src/state/storage.js';
-import { createCloudSync } from '../src/state/cloudSync.js';
+import {
+  createCloudSync,
+  isSameOriginAuthHost,
+  resolveAuthDomain,
+} from '../src/state/cloudSync.js';
 import { createStore } from '../src/state/store.js';
 
 let passed = 0;
@@ -623,6 +627,15 @@ async function runAsyncCloudSyncTests() {
     },
   };
 
+  // 0. Vercel same-origin authDomain & host detection
+  assert.equal(resolveAuthDomain('easy-one-coral.vercel.app'), 'easy-one-coral.vercel.app');
+  assert.equal(resolveAuthDomain('localhost:4173'), 'rupeesync-split-2026.firebaseapp.com');
+  assert.equal(resolveAuthDomain(''), 'rupeesync-split-2026.firebaseapp.com');
+  assert.equal(isSameOriginAuthHost('easy-one-coral.vercel.app'), true);
+  assert.equal(isSameOriginAuthHost('rupeesync-split-2026.web.app'), true);
+  assert.equal(isSameOriginAuthHost('rupeesync-split-2026.firebaseapp.com'), true);
+  assert.equal(isSameOriginAuthHost('localhost'), false);
+
   // 1. Cold-click before SDK loads warms SDK without calling async popup
   const coldSync = createCloudSync({
     store,
@@ -670,12 +683,12 @@ async function runAsyncCloudSyncTests() {
     'cross-origin host must not silently fall back to signInWithRedirect'
   );
 
-  // 4. Same-origin host falls back to signInWithRedirect on auth/popup-blocked
+  // 4. Same-origin host (Vercel proxy) falls back to signInWithRedirect on auth/popup-blocked
   const sameOriginSync = createCloudSync({
     store,
     onStatusChange() {},
     sdkLoader: async () => mockSdk,
-    allowRedirectFallback: () => true,
+    allowRedirectFallback: () => isSameOriginAuthHost('easy-one-coral.vercel.app'),
   });
   await sameOriginSync.init();
   const resRedirect = await sameOriginSync.signInWithGoogle();
