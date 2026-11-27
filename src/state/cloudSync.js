@@ -136,16 +136,46 @@ export function createCloudSync({
   let isHydrating = false;
   let saveTimer = null;
   let resolvedSdk = null;
+  let inFlightSdkPromise = null;
   const syncedActivityIds = new Set();
+
+  async function warmPopupResolver(sdk) {
+    const resolver = sdk?.auth?._popupRedirectResolver;
+    if (typeof resolver?._initialize !== 'function') {
+      return;
+    }
+    let timerId = null;
+    try {
+      await Promise.race([
+        Promise.resolve(resolver._initialize(sdk.auth)).catch(() => null),
+        new Promise((resolve) => {
+          timerId = setTimeout(resolve, 4000);
+        }),
+      ]);
+    } finally {
+      if (timerId !== null) {
+        clearTimeout(timerId);
+      }
+    }
+  }
 
   function getSdk() {
     if (resolvedSdk) {
       return Promise.resolve(resolvedSdk);
     }
-    return Promise.resolve(sdkLoader()).then((sdk) => {
-      resolvedSdk = sdk;
-      return sdk;
-    });
+    if (!inFlightSdkPromise) {
+      inFlightSdkPromise = Promise.resolve(sdkLoader())
+        .then(async (sdk) => {
+          await warmPopupResolver(sdk);
+          resolvedSdk = sdk;
+          return sdk;
+        })
+        .catch((err) => {
+          inFlightSdkPromise = null;
+          throw err;
+        });
+    }
+    return inFlightSdkPromise;
   }
 
   function preload() {

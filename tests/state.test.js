@@ -655,6 +655,55 @@ async function runAsyncCloudSyncTests() {
     'signInWithPopup must not run asynchronously after network SDK load'
   );
 
+  // 1b. Resolver prewarm runs during init before ready becomes true and tolerates failure
+  let resolverCalls = 0;
+  let readyOnResolverCall = null;
+  let latestStatus = null;
+  const warmSync = createCloudSync({
+    store,
+    onStatusChange(status) {
+      latestStatus = status;
+    },
+    sdkLoader: async () => ({
+      ...mockSdk,
+      auth: {
+        name: 'warm-auth',
+        _popupRedirectResolver: {
+          _initialize(authArg) {
+            resolverCalls += 1;
+            readyOnResolverCall = Boolean(latestStatus?.ready);
+            assert.equal(authArg.name, 'warm-auth');
+            return Promise.resolve({ manager: true });
+          },
+        },
+      },
+    }),
+  });
+  await warmSync.init();
+  assert.equal(resolverCalls, 1);
+  assert.equal(readyOnResolverCall, false);
+  assert.equal(latestStatus?.ready, true);
+
+  const failingResolverSync = createCloudSync({
+    store,
+    onStatusChange(status) {
+      latestStatus = status;
+    },
+    sdkLoader: async () => ({
+      ...mockSdk,
+      auth: {
+        name: 'failing-resolver-auth',
+        _popupRedirectResolver: {
+          _initialize() {
+            return Promise.reject(new Error('gapi blocked'));
+          },
+        },
+      },
+    }),
+  });
+  await failingResolverSync.init();
+  assert.equal(latestStatus?.ready, true);
+
   const sync = createCloudSync({
     store,
     onStatusChange() {},
