@@ -19,23 +19,31 @@ const FIREBASE_CONFIG = {
 };
 
 let sdkCache = null;
+let sdkPromise = null;
 
-async function loadFirebaseSdk() {
+function loadFirebaseSdk() {
   if (sdkCache) {
-    return sdkCache;
+    return Promise.resolve(sdkCache);
   }
-  const [appMod, authMod, fsMod] = await Promise.all([
-    import(`${FIREBASE_SDK_BASE}/firebase-app.js`),
-    import(`${FIREBASE_SDK_BASE}/firebase-auth.js`),
-    import(`${FIREBASE_SDK_BASE}/firebase-firestore.js`),
-  ]);
-
-  const app = appMod.getApps().length > 0 ? appMod.getApp() : appMod.initializeApp(FIREBASE_CONFIG);
-  const auth = authMod.getAuth(app);
-  const db = fsMod.getFirestore(app);
-
-  sdkCache = { app, auth, db, authMod, fsMod };
-  return sdkCache;
+  if (!sdkPromise) {
+    sdkPromise = Promise.all([
+      import(`${FIREBASE_SDK_BASE}/firebase-app.js`),
+      import(`${FIREBASE_SDK_BASE}/firebase-auth.js`),
+      import(`${FIREBASE_SDK_BASE}/firebase-firestore.js`),
+    ])
+      .then(([appMod, authMod, fsMod]) => {
+        const app = appMod.getApps().length > 0 ? appMod.getApp() : appMod.initializeApp(FIREBASE_CONFIG);
+        const auth = authMod.getAuth(app);
+        const db = fsMod.getFirestore(app);
+        sdkCache = { app, auth, db, authMod, fsMod };
+        return sdkCache;
+      })
+      .catch((err) => {
+        sdkPromise = null;
+        throw err;
+      });
+  }
+  return sdkPromise;
 }
 
 function formatAuthError(err) {
@@ -77,16 +85,32 @@ function formatAuthError(err) {
  *     syncState: 'local' | 'syncing' | 'synced' | 'error',
  *     syncMessage: string,
  *   }) => void,
+ *   sdkLoader?: () => Promise<any>,
  * }} deps
  */
-export function createCloudSync({ store, onStatusChange }) {
+export function createCloudSync({ store, onStatusChange, sdkLoader = loadFirebaseSdk }) {
   let currentUser = null;
   let syncState = 'local';
   let syncMessage = 'Saved locally in this browser';
   let ready = false;
   let isHydrating = false;
   let saveTimer = null;
+  let resolvedSdk = null;
   const syncedActivityIds = new Set();
+
+  function getSdk() {
+    if (resolvedSdk) {
+      return Promise.resolve(resolvedSdk);
+    }
+    return Promise.resolve(sdkLoader()).then((sdk) => {
+      resolvedSdk = sdk;
+      return sdk;
+    });
+  }
+
+  function preload() {
+    return getSdk().catch(() => null);
+  }
 
   function emitStatus() {
     onStatusChange({
@@ -105,7 +129,7 @@ export function createCloudSync({ store, onStatusChange }) {
 
   async function pushWorkspaceToCloud(uid) {
     if (!uid) return;
-    const { db, fsMod } = await loadFirebaseSdk();
+    const { db, fsMod } = await getSdk();
     const { doc, setDoc } = fsMod;
     const payload = store.getCloudPayload();
 
@@ -138,7 +162,7 @@ export function createCloudSync({ store, onStatusChange }) {
   }
 
   async function loadCloudWorkspace(user) {
-    const { db, fsMod } = await loadFirebaseSdk();
+    const { db, fsMod } = await getSdk();
     const { collection, doc, getDoc, getDocs } = fsMod;
 
     syncState = 'syncing';
@@ -214,7 +238,7 @@ export function createCloudSync({ store, onStatusChange }) {
   async function init() {
     emitStatus();
     try {
-      const { auth, authMod } = await loadFirebaseSdk();
+      const { auth, authMod } = await getSdk();
       ready = true;
       store.subscribe(scheduleSync);
 
@@ -229,6 +253,14 @@ export function createCloudSync({ store, onStatusChange }) {
         }
         await loadCloudWorkspace(user);
       });
+
+      if (typeof authMod.getRedirectResult === 'function') {
+        authMod.getRedirectResult(auth).catch((err) => {
+          syncState = 'error';
+          syncMessage = formatAuthError(err);
+          emitStatus();
+        });
+      }
     } catch {
       ready = false;
       syncState = 'local';
@@ -237,21 +269,38 @@ export function createCloudSync({ store, onStatusChange }) {
     }
   }
 
-  async function signInWithGoogle() {
-    try {
-      const { auth, authMod } = await loadFirebaseSdk();
-      const provider = new authMod.GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      await authMod.signInWithPopup(auth, provider);
-      return { ok: true, error: null };
-    } catch (err) {
-      return { ok: false, error: formatAuthError(err) };
+  function startGoogleAuth({ auth, authMod }) {
+    const provider = new authMod.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    return authMod.signInWithPopup(auth, provider).then(
+      () => ({ ok: true, error: null, redirected: false }),
+      (err) => {
+        if (err?.code === 'auth/popup-blocked' && typeof authMod.signInWithRedirect === 'function') {
+          return authMod.signInWithRedirect(auth, provider).then(
+            () => ({ ok: true, error: null, redirected: true }),
+            (redirectErr) => ({ ok: false, error: formatAuthError(redirectErr), redirected: false })
+          );
+        }
+        return { ok: false, error: formatAuthError(err), redirected: false };
+      }
+    );
+  }
+
+  function signInWithGoogle() {
+    // Call signInWithPopup synchronously inside the click gesture once SDK is cached.
+    if (resolvedSdk) {
+      return startGoogleAuth(resolvedSdk);
     }
+    return getSdk().then(startGoogleAuth, (err) => ({
+      ok: false,
+      error: formatAuthError(err),
+      redirected: false,
+    }));
   }
 
   async function signInWithEmail(email, password) {
     try {
-      const { auth, authMod } = await loadFirebaseSdk();
+      const { auth, authMod } = await getSdk();
       await authMod.signInWithEmailAndPassword(auth, String(email).trim(), String(password));
       return { ok: true, error: null };
     } catch (err) {
@@ -261,7 +310,7 @@ export function createCloudSync({ store, onStatusChange }) {
 
   async function registerWithEmail(email, password) {
     try {
-      const { auth, authMod } = await loadFirebaseSdk();
+      const { auth, authMod } = await getSdk();
       await authMod.createUserWithEmailAndPassword(auth, String(email).trim(), String(password));
       return { ok: true, error: null };
     } catch (err) {
@@ -271,7 +320,7 @@ export function createCloudSync({ store, onStatusChange }) {
 
   async function sendPasswordReset(email) {
     try {
-      const { auth, authMod } = await loadFirebaseSdk();
+      const { auth, authMod } = await getSdk();
       await authMod.sendPasswordResetEmail(auth, String(email).trim());
       return { ok: true, error: null };
     } catch (err) {
@@ -286,7 +335,7 @@ export function createCloudSync({ store, onStatusChange }) {
         saveTimer = null;
         await pushWorkspaceToCloud(currentUser.uid);
       }
-      const { auth, authMod } = await loadFirebaseSdk();
+      const { auth, authMod } = await getSdk();
       await authMod.signOut(auth);
       return { ok: true, error: null };
     } catch (err) {
@@ -296,6 +345,7 @@ export function createCloudSync({ store, onStatusChange }) {
 
   return {
     init,
+    preload,
     signInWithGoogle,
     signInWithEmail,
     registerWithEmail,

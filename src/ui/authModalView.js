@@ -26,6 +26,7 @@ export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, clou
   };
 
   function openDialog() {
+    cloudSync.preload?.();
     if (typeof dialog.showModal === 'function') {
       if (!dialog.open) dialog.showModal();
     } else {
@@ -149,6 +150,9 @@ export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, clou
       clearInlineError(errorEl);
       googleBtn.disabled = true;
       const res = await cloudSync.signInWithGoogle();
+      if (res.redirected) {
+        return;
+      }
       googleBtn.disabled = false;
       if (!res.ok) {
         setInlineError(errorEl, res.error);
@@ -251,9 +255,10 @@ export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, clou
   }
 
   function updateStatus(nextStatus) {
+    const prevUser = currentStatus.user;
     currentStatus = nextStatus;
     updateTriggerButtons();
-    if (dialog.open) {
+    if (dialog.open && (Boolean(prevUser) !== Boolean(nextStatus.user) || Boolean(nextStatus.user))) {
       renderDialogBody();
     }
   }

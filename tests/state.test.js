@@ -10,6 +10,7 @@ import {
   saveActivity,
   saveState,
 } from '../src/state/storage.js';
+import { createCloudSync } from '../src/state/cloudSync.js';
 import { createStore } from '../src/state/store.js';
 
 let passed = 0;
@@ -574,5 +575,97 @@ test('Cloud Sync Helpers: Non-Destructive Activity Hydration', () => {
   assert.equal(s.getDerivedState().activityFeed.length, localActCount + 1);
   assert.ok(s.getCloudPayload().groups.some((g) => g.id === 'grp_cloud'));
 });
+
+async function runAsyncCloudSyncTests() {
+  const storage = createMemoryStorage();
+  const store = createStore({ storage });
+  const events = [];
+
+  class MockGoogleAuthProvider {
+    setCustomParameters(params) {
+      events.push(['params', params]);
+    }
+  }
+
+  let popupMode = 'sync-ok';
+  const mockSdk = {
+    app: {},
+    auth: { name: 'mock-auth' },
+    db: {},
+    fsMod: {},
+    authMod: {
+      GoogleAuthProvider: MockGoogleAuthProvider,
+      onAuthStateChanged(_auth, cb) {
+        cb(null);
+      },
+      getRedirectResult() {
+        events.push(['getRedirectResult']);
+        return Promise.resolve(null);
+      },
+      signInWithPopup() {
+        events.push(['signInWithPopup']);
+        if (popupMode === 'blocked') {
+          const err = new Error('Blocked');
+          err.code = 'auth/popup-blocked';
+          return Promise.reject(err);
+        }
+        if (popupMode === 'closed') {
+          const err = new Error('Closed');
+          err.code = 'auth/popup-closed-by-user';
+          return Promise.reject(err);
+        }
+        return Promise.resolve({ user: { uid: 'u1' } });
+      },
+      signInWithRedirect() {
+        events.push(['signInWithRedirect']);
+        return Promise.resolve();
+      },
+    },
+  };
+
+  const sync = createCloudSync({
+    store,
+    onStatusChange() {},
+    sdkLoader: async () => mockSdk,
+  });
+  await sync.init();
+
+  // 1. Synchronous invocation of signInWithPopup once SDK is cached
+  const beforeLen = events.length;
+  const pSync = sync.signInWithGoogle();
+  assert.equal(
+    events.slice(beforeLen).some(([name]) => name === 'signInWithPopup'),
+    true,
+    'signInWithPopup must be invoked synchronously before returning Promise'
+  );
+  const resOk = await pSync;
+  assert.deepEqual(resOk, { ok: true, error: null, redirected: false });
+
+  // 2. auth/popup-blocked automatically falls back to signInWithRedirect
+  popupMode = 'blocked';
+  const resRedirect = await sync.signInWithGoogle();
+  assert.deepEqual(resRedirect, { ok: true, error: null, redirected: true });
+  assert.equal(
+    events.some(([name]) => name === 'signInWithRedirect'),
+    true,
+    'signInWithRedirect fallback should trigger on auth/popup-blocked'
+  );
+
+  // 3. User-cancelled popup surfaces error cleanly without redirect
+  const redirectCountBefore = events.filter(([name]) => name === 'signInWithRedirect').length;
+  popupMode = 'closed';
+  const resClosed = await sync.signInWithGoogle();
+  assert.equal(resClosed.ok, false);
+  assert.match(resClosed.error, /closed before finishing/i);
+  assert.equal(
+    events.filter(([name]) => name === 'signInWithRedirect').length,
+    redirectCountBefore
+  );
+
+  passed += 1;
+  console.log('PASS: Cloud Sync: synchronous Google popup invocation & auth/popup-blocked redirect fallback');
+}
+
+await runAsyncCloudSyncTests();
 
 console.log(`\nPhase 3 state & persistence tests complete: ${passed} passed, 0 failed.`);
