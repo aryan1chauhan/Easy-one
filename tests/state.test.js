@@ -11,6 +11,7 @@ import {
   saveState,
 } from '../src/state/storage.js';
 import { createStore } from '../src/state/store.js';
+import { normalizePhoneE164 } from '../src/state/cloudSync.js';
 
 let passed = 0;
 
@@ -530,6 +531,54 @@ test('Multi-Group Switching, Group Naming, Category Filter & Reload Persistence'
 
   // Activity log holds group_created alongside Goa Trip actions
   assert.ok(s2.getDerivedState().activityFeed.some((e) => e.type === 'group_created'));
+});
+
+test('Cloud Sync Helpers: E.164 Phone Normalization & Non-Destructive Activity Hydration', () => {
+  assert.equal(normalizePhoneE164('9876543210'), '+919876543210');
+  assert.equal(normalizePhoneE164('09876543210'), '+919876543210');
+  assert.equal(normalizePhoneE164('+1 (415) 555-0100'), '+14155550100');
+  assert.equal(normalizePhoneE164('  '), '');
+
+  const storage = createMemoryStorage();
+  const s = createStore({ storage });
+  const r = s.addMember('Rahul').member;
+  const p = s.addMember('Priya').member;
+  s.addExpense({
+    title: 'Tea',
+    amount: '100',
+    paidBy: r.id,
+    splitType: 'equal',
+    splitAmong: [r.id, p.id],
+  });
+  const localActCount = s.getDerivedState().activityFeed.length;
+
+  // Hydrate cloud entries + cloud group without wiping local activity log entries
+  s.hydrateCloudWorkspace({
+    activeGroupId: 'grp_cloud',
+    groups: [
+      {
+        id: 'grp_cloud',
+        name: 'Cloud Group',
+        createdAt: 100,
+        state: createInitialState(),
+      },
+    ],
+    activityEntries: [
+      {
+        id: 'act_remote_1',
+        type: 'group_created',
+        summary: 'Created group "Cloud Group"',
+        detail: 'Synced from mobile',
+        category: 'other',
+        amountPaise: null,
+        createdAt: 50,
+      },
+    ],
+  });
+
+  assert.equal(s.getState().groupName, 'Cloud Group');
+  assert.equal(s.getDerivedState().activityFeed.length, localActCount + 1);
+  assert.ok(s.getCloudPayload().groups.some((g) => g.id === 'grp_cloud'));
 });
 
 console.log(`\nPhase 3 state & persistence tests complete: ${passed} passed, 0 failed.`);

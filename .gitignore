@@ -55,8 +55,11 @@ desktop.ini
 *.swp
 *~
 
-# Local agent instructions & planning docs (keep local only, never push)
+# Local agent instructions, planning docs & local Firebase/Reticle state (keep local only, never push)
 AGENTS.md
 Instruction.md
 docs/
+.firebaserc
+.reticle/
+firebase.json
 

@@ -6,9 +6,11 @@
 
 import { formatRupees } from './core/money.js';
 import { MAX_MEMBERS, MIN_MEMBERS_FOR_EXPENSE } from './core/validators.js';
+import { createCloudSync } from './state/cloudSync.js';
 import { createStore } from './state/store.js';
 import { mountActivityView } from './ui/activityView.js';
 import { mountAnalyticsView } from './ui/analyticsView.js';
+import { mountAuthModalView } from './ui/authModalView.js';
 import { mountBalanceView } from './ui/balanceView.js';
 import { svgIcon } from './ui/domHelpers.js';
 import { mountExpenseFormView } from './ui/expenseFormView.js';
@@ -235,6 +237,29 @@ function initApp() {
     store,
     onOpenReset: () => resetTriggerBtn.click(),
   });
+
+  let authModal = null;
+  const cloudSync = createCloudSync({
+    store,
+    onStatusChange: (status) => {
+      if (authModal) {
+        authModal.updateStatus(status);
+      }
+    },
+  });
+
+  authModal = mountAuthModalView({
+    dialog: document.getElementById('auth-dialog'),
+    closeBtn: document.getElementById('auth-dialog-close'),
+    bodyEl: document.getElementById('auth-dialog-body'),
+    triggerBtns: [
+      document.getElementById('sidebar-auth-btn'),
+      document.getElementById('header-auth-btn'),
+    ],
+    cloudSync,
+  });
+
+  cloudSync.init();
 
   function renderAll(snapshot) {
     renderStorageBanner(snapshot.storageWarning);

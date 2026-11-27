@@ -1,0 +1,10 @@
+AGENTS.md
+Instruction.md
+docs
+tests
+*.log
+firebase.json
+.firebaserc
+firestore.rules
+firestore.indexes.json
+.firebase

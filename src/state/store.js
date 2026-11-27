@@ -621,6 +621,62 @@ export function createStore(options = {}) {
     return { ok: cleared.ok, error: cleared.error };
   }
 
+  function getCloudPayload() {
+    const syncedGroups = groupsMeta.groups.map((g) =>
+      g.id === groupsMeta.activeGroupId ? { ...g, state: persisted } : g
+    );
+    return cloneSnapshot({
+      activeGroupId: groupsMeta.activeGroupId,
+      groups: syncedGroups,
+      activityLog,
+    });
+  }
+
+  function hydrateCloudWorkspace(cloudPayload) {
+    if (!cloudPayload || typeof cloudPayload !== 'object') {
+      return;
+    }
+
+    // Merge permanent append-only activity log without dropping local entries
+    const mergedById = new Map();
+    for (const entry of activityLog) {
+      mergedById.set(entry.id, entry);
+    }
+    if (Array.isArray(cloudPayload.activityEntries)) {
+      for (const entry of cloudPayload.activityEntries) {
+        if (entry && typeof entry.id === 'string' && !mergedById.has(entry.id)) {
+          mergedById.set(entry.id, entry);
+        }
+      }
+    }
+    activityLog = [...mergedById.values()].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+    saveActivity(activityLog, storageBackend);
+
+    if (Array.isArray(cloudPayload.groups) && cloudPayload.groups.length > 0) {
+      hasCustomizedGroups = cloudPayload.groups.length > 1 || cloudPayload.groups[0].name !== DEFAULT_GROUP_NAME;
+      const targetId = cloudPayload.activeGroupId;
+      const resolvedActive = cloudPayload.groups.some((g) => g.id === targetId)
+        ? targetId
+        : cloudPayload.groups[0].id;
+      groupsMeta = {
+        activeGroupId: resolvedActive,
+        groups: cloneSnapshot(cloudPayload.groups),
+      };
+      const activeRec = groupsMeta.groups.find((g) => g.id === resolvedActive) ?? groupsMeta.groups[0];
+      persisted = cloneSnapshot(activeRec.state ?? createInitialState());
+      saveState(persisted, storageBackend);
+      if (hasCustomizedGroups) {
+        saveGroupsMeta(groupsMeta, storageBackend);
+      }
+      activeMemberFilter = 'all';
+      activeCategoryFilter = 'all';
+      viewerMemberId = 'all';
+      searchQuery = '';
+    }
+
+    notify();
+  }
+
   return {
     getState,
     getDerivedState,
@@ -640,5 +696,7 @@ export function createStore(options = {}) {
     createGroup,
     switchGroup,
     resetGroup,
+    getCloudPayload,
+    hydrateCloudWorkspace,
   };
 }
