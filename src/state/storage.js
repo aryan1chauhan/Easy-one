@@ -571,27 +571,6 @@ export function clearGroupsMeta(storageBackend) {
 }
 
 /**
- * Clears all local workspace keys (used on explicit sign-out for shared-device hygiene).
- *
- * @param {Storage} [storageBackend]
- * @returns {{ ok: boolean, error: string | null }}
- */
-export function clearAllWorkspaceStorage(storageBackend) {
-  const backend = resolveStorage(storageBackend);
-  if (!backend) {
-    return { ok: false, error: STORAGE_UNAVAILABLE_WARNING };
-  }
-  try {
-    backend.removeItem(STORAGE_KEY);
-    backend.removeItem(GROUPS_STORAGE_KEY);
-    backend.removeItem(ACTIVITY_STORAGE_KEY);
-    return { ok: true, error: null };
-  } catch {
-    return { ok: false, error: STORAGE_UNAVAILABLE_WARNING };
-  }
-}
-
-/**
  * Loads saved multi-group workspace metadata safely without throwing.
  * Purges corrupted metadata from storage so malformed payloads do not linger.
  *

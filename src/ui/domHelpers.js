@@ -87,12 +87,6 @@ const ICON_PATHS = {
     'M6 6l12 12',
     'M18 6 6 18',
   ],
-  cloud: [
-    'M7 18a4.5 4.5 0 0 1-.8-8.9A5.5 5.5 0 0 1 17 8a4 4 0 0 1 .5 7.95H7Z',
-  ],
-  google: [
-    'M12 12h8.2a8 8 0 1 1-2.3-5.6',
-  ],
 };
 
 export const CATEGORY_META = {

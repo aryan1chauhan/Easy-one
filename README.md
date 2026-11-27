@@ -6,8 +6,8 @@ A zero-dependency, client-side multi-view web application for tracking shared gr
 
 ## Tech Stack
 
-- **Frontend:** Pure HTML5, CSS3, and native ES6+ modules (`<script type="module">`) — zero frameworks or bundlers (Firebase Auth & Firestore v11 SDK modules load lazily from `gstatic.com` only for optional Cloud Sync)
-- **Persistence & Sync:** Offline-first browser `localStorage` (`expense_splitter_state_v1`, `expense_splitter_activity_v1`), plus optional Firebase Auth (Google / Gmail and Email/Password) and UID-scoped Cloud Firestore sync with append-only activity rules and clean offline fallback
+- **Frontend:** Pure HTML5, CSS3, and native ES6+ modules (`<script type="module">`) — zero frameworks, bundlers, or external runtime dependencies
+- **Persistence:** Offline-first browser `localStorage` (`expense_splitter_state_v1`, `expense_splitter_activity_v1`, `expense_splitter_groups_v1`) with strict schema validation and corruption recovery
 - **Automated Tests:** Zero-dependency Node.js test suites (`node:assert/strict`, verified on Node.js v23.10.0)
 
 ## How to Run Locally
@@ -32,7 +32,7 @@ For static hosting (GitHub Pages, Vercel, or Netlify), deploy the repository roo
 # Pure domain unit tests (money precision, validators, balances, category analytics, Bitmask DP) — 33 assertions
 node tests/core.test.js
 
-# Reactive store, multi-group, Cloud Sync helpers & fault-tolerant localStorage persistence tests — 8 test suites
+# Reactive store, multi-group, and fault-tolerant localStorage persistence tests
 node tests/state.test.js
 ```
 
@@ -64,9 +64,7 @@ node tests/state.test.js
 ## Architecture Overview
 
 ```text
-├── index.html                  # Multi-view web shell, mobile bottom dock, composer, reset & auth <dialog>s
-├── firestore.rules             # UID-scoped Firestore security rules (append-only activity log enforcement)
-├── firestore.indexes.json      # Firestore composite index definitions
+├── index.html                  # Multi-view web shell, mobile bottom dock, composer & reset <dialog>s
 ├── styles/
 │   └── main.css                # RupeeSync warm cream/peach/indigo design system & responsive breakpoints
 ├── src/
@@ -76,14 +74,12 @@ node tests/state.test.js
 │   │   ├── validators.js       # Member, expense, split, and removal validation rules
 │   │   ├── balances.js         # Total paid, share, net balance, category aggregation & zero-sum check
 │   │   └── settleUp.js         # Exact Bitmask DP solver & transfer verification helper
-│   ├── state/                  # Observable state, persistence & optional Cloud Sync layer
+│   ├── state/                  # Observable state & localStorage persistence layer
 │   │   ├── storage.js          # Versioned localStorage schema guard, multi-group & activity storage
-│   │   ├── store.js            # Reactive pub-sub store with canonical state snapshots
-│   │   └── cloudSync.js        # Firebase Auth (Google, Email) & Firestore sync adapter
+│   │   └── store.js            # Reactive pub-sub store with canonical state snapshots
 │   └── ui/                     # XSS-safe DOM controllers (textContent & createElementNS only)
 │       ├── domHelpers.js       # Element creation, SVG icons, avatar badges & inline alerts
 │       ├── modalView.js        # Accessible Reset Group <dialog> modal controller
-│       ├── authModalView.js    # Account & Cloud Sync <dialog> controller (Google, Email)
 │       ├── overviewView.js     # RupeeSync hero balance card, meters, payees strip & quick actions
 │       ├── memberView.js       # Group members chips, count badge, and inline validation
 │       ├── expenseFormView.js  # Add Expense modal composer (Equal / Exact / Percentage modes)
@@ -111,7 +107,7 @@ With members **Rahul**, **Priya**, **Aman** and expenses:
 
 ## Known Limitations
 
-- **Offline-first local default:** Guest sessions persist in the active browser's `localStorage` (subject to browser quota; `QuotaExceededError` surfaces a non-blocking warning) and fall back cleanly if Firebase network/config is unavailable; cross-device sync requires signing in via the optional Account & Cloud Sync dialog (`Sign in · Save`).
+- **Local browser persistence:** Data persists in the active browser's `localStorage` (subject to browser quota; `QuotaExceededError` surfaces a non-blocking warning) and is scoped to that browser profile.
 - **Single currency (`₹`):** Multi-currency conversion is out of scope; max single expense is capped at `₹1,00,00,000` ($10^9$ paise).
 - **Static HTTP server required locally:** Direct `file://` opening is blocked by browser ES module CORS restrictions.
 - **Group size bound:** Member cap is enforced at 2–10 members per specification, aligning with the $O(3^k)$ Bitmask DP limit.

@@ -5,9 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RupeeSync · Expense Splitter</title>
   <link rel="icon" href="data:,">
-  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js">
-  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js">
-  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js">
   <link rel="stylesheet" href="./styles/main.css">
 </head>
 <body>
@@ -64,9 +61,6 @@
             <strong id="sidebar-pending-val">₹0</strong>
           </div>
         </div>
-        <button id="sidebar-auth-btn" type="button" class="btn btn-secondary btn-sm auth-trigger-btn">
-          <span>Sign in · Save</span>
-        </button>
         <button id="sidebar-reset-btn" type="button" class="btn btn-danger-outline btn-sm sidebar-reset-btn">
           Reset group
         </button>
@@ -106,9 +100,6 @@
           </nav>
 
           <div class="header-actions">
-            <button id="header-auth-btn" type="button" class="btn btn-secondary btn-sm auth-trigger-btn">
-              <span>Sign in · Save</span>
-            </button>
             <button id="open-add-expense-btn" type="button" class="btn btn-primary btn-sm">
               + Add Expense
             </button>
@@ -277,19 +268,6 @@
         <button id="reset-cancel-btn" type="button" class="btn btn-secondary">Cancel</button>
         <button id="reset-confirm-btn" type="button" class="btn btn-danger">Yes, Reset Group</button>
       </div>
-    </div>
-  </dialog>
-
-  <!-- Cloud Account & Sync Modal (Google / Email) -->
-  <dialog id="auth-dialog" class="modal-dialog modal-auth" aria-labelledby="auth-dialog-title">
-    <div class="modal-content">
-      <div class="modal-head">
-        <h2 id="auth-dialog-title" class="modal-title">Account &amp; Cloud Sync</h2>
-        <button id="auth-dialog-close" type="button" class="btn-icon" aria-label="Close sign-in dialog">
-          ×
-        </button>
-      </div>
-      <div id="auth-dialog-body"></div>
     </div>
   </dialog>
 
