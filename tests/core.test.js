@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { performance } from 'node:perf_hooks';
 import {
   MAX_AMOUNT_PAISE,
   TOTAL_BPS,
@@ -16,6 +17,8 @@ import {
   validateExpenseInput,
   validateRemoveMember,
 } from '../src/core/validators.js';
+import { calculateBalances } from '../src/core/balances.js';
+import { computeMinimumSettlements, verifySettlements } from '../src/core/settleUp.js';
 
 let passed = 0;
 
@@ -589,4 +592,352 @@ test('Expense validator defensive & split paths: parsed shape, invalid fields, p
   assert.match(badPct.error, /^Invalid percentage for Priya:/);
 });
 
-console.log(`\nPhase 1 core tests complete: ${passed} passed, 0 failed.`);
+// ---------------------------------------------------------------------------
+// Phase 2: Balance Engine & Minimum-Transaction Solver (S-01 to S-11, T-01 to T-04)
+// ---------------------------------------------------------------------------
+
+test('S-01 & S-02 & T-04: zero expenses and self-settled zero-net expenses yield 0 payments', () => {
+  const members = makeMembers(['Rahul', 'Priya']);
+
+  // S-01: no expenses
+  const emptyBal = calculateBalances(members, [], []);
+  assert.equal(emptyBal.totalSpendPaise, 0);
+  assert.equal(emptyBal.netSumPaise, 0);
+  assert.deepEqual(
+    emptyBal.balances.map((b) => [b.paidPaise, b.sharePaise, b.netPaise]),
+    [
+      [0, 0, 0],
+      [0, 0, 0],
+    ]
+  );
+  assert.deepEqual(computeMinimumSettlements(emptyBal.balances), []);
+
+  // S-02: self-expense (E-04) + canceling equal expense -> net 0 everywhere
+  const selfExpense = {
+    id: 'e1',
+    title: 'Coffee',
+    amountPaise: 15000,
+    paidBy: 'm1',
+    splitType: 'equal',
+    shares: [{ memberId: 'm1', sharePaise: 15000 }],
+  };
+  const mutualA = {
+    id: 'e2',
+    title: 'Lunch',
+    amountPaise: 20000,
+    paidBy: 'm1',
+    splitType: 'equal',
+    shares: [
+      { memberId: 'm1', sharePaise: 10000 },
+      { memberId: 'm2', sharePaise: 10000 },
+    ],
+  };
+  const mutualB = {
+    id: 'e3',
+    title: 'Snacks',
+    amountPaise: 20000,
+    paidBy: 'm2',
+    splitType: 'equal',
+    shares: [
+      { memberId: 'm1', sharePaise: 10000 },
+      { memberId: 'm2', sharePaise: 10000 },
+    ],
+  };
+
+  const settledBal = calculateBalances(members, [selfExpense, mutualA, mutualB]);
+  assert.equal(settledBal.totalSpendPaise, 55000);
+  assert.equal(settledBal.netSumPaise, 0);
+  assert.deepEqual(computeMinimumSettlements(settledBal.balances), []);
+
+  // T-04: clearing expenses restores zeros cleanly
+  const clearedBal = calculateBalances(members, []);
+  assert.equal(clearedBal.totalSpendPaise, 0);
+  assert.deepEqual(computeMinimumSettlements(clearedBal.balances), []);
+});
+
+test('S-03: Official Sample Test Case (Rahul, Priya, Aman -> exact balances and 2 payments)', () => {
+  const members = makeMembers(['Rahul', 'Priya', 'Aman']);
+  const expenses = [
+    {
+      id: 'e1',
+      title: 'Dinner',
+      amountPaise: 90000,
+      paidBy: 'm1',
+      splitType: 'equal',
+      shares: distributeEqual(90000, ['m1', 'm2', 'm3']),
+    },
+    {
+      id: 'e2',
+      title: 'Cab',
+      amountPaise: 30000,
+      paidBy: 'm2',
+      splitType: 'equal',
+      shares: distributeEqual(30000, ['m2', 'm3']),
+    },
+    {
+      id: 'e3',
+      title: 'Snacks',
+      amountPaise: 15000,
+      paidBy: 'm3',
+      splitType: 'equal',
+      shares: distributeEqual(15000, ['m1', 'm2', 'm3']),
+    },
+  ];
+
+  const { balances, totalSpendPaise, netSumPaise } = calculateBalances(members, expenses);
+  assert.equal(totalSpendPaise, 135000);
+  assert.equal(netSumPaise, 0);
+
+  const byName = Object.fromEntries(balances.map((b) => [b.name, b]));
+  assert.equal(byName.Rahul.paidPaise, 90000);
+  assert.equal(byName.Rahul.sharePaise, 35000);
+  assert.equal(byName.Rahul.netPaise, 55000);
+
+  assert.equal(byName.Priya.paidPaise, 30000);
+  assert.equal(byName.Priya.sharePaise, 50000);
+  assert.equal(byName.Priya.netPaise, -20000);
+
+  assert.equal(byName.Aman.paidPaise, 15000);
+  assert.equal(byName.Aman.sharePaise, 50000);
+  assert.equal(byName.Aman.netPaise, -35000);
+
+  const payments = computeMinimumSettlements(balances);
+  assert.equal(payments.length, 2);
+  assert.equal(`${payments[0].fromName} pays ${payments[0].toName} ${formatRupees(payments[0].amountPaise)}`, 'Aman pays Rahul ₹350');
+  assert.equal(`${payments[1].fromName} pays ${payments[1].toName} ${formatRupees(payments[1].amountPaise)}`, 'Priya pays Rahul ₹200');
+  assert.equal(payments[0].fromMemberId, 'm3');
+  assert.equal(payments[0].toMemberId, 'm1');
+  assert.equal(verifySettlements(balances, payments), true);
+});
+
+test('S-04, S-05, S-06: transitive chains collapse to 1 payment and closed cycles yield 0 payments', () => {
+  // S-04: A owes B ₹100, B owes C ₹100
+  const m3 = makeMembers(['A', 'B', 'C']);
+  const chain3 = calculateBalances(m3, [
+    { id: 'e1', amountPaise: 10000, paidBy: 'm2', shares: [{ memberId: 'm1', sharePaise: 10000 }] },
+    { id: 'e2', amountPaise: 10000, paidBy: 'm3', shares: [{ memberId: 'm2', sharePaise: 10000 }] },
+  ]);
+  const p3 = computeMinimumSettlements(chain3.balances);
+  assert.equal(p3.length, 1);
+  assert.equal(p3[0].fromName, 'A');
+  assert.equal(p3[0].toName, 'C');
+  assert.equal(p3[0].amountPaise, 10000);
+  assert.equal(verifySettlements(chain3.balances, p3), true);
+
+  // S-05: 4-member chain A -> B -> C -> D ₹100 each -> 1 payment A pays D ₹100
+  const m4 = makeMembers(['A', 'B', 'C', 'D']);
+  const chain4 = calculateBalances(m4, [
+    { id: 'e1', amountPaise: 10000, paidBy: 'm2', shares: [{ memberId: 'm1', sharePaise: 10000 }] },
+    { id: 'e2', amountPaise: 10000, paidBy: 'm3', shares: [{ memberId: 'm2', sharePaise: 10000 }] },
+    { id: 'e3', amountPaise: 10000, paidBy: 'm4', shares: [{ memberId: 'm3', sharePaise: 10000 }] },
+  ]);
+  const p4 = computeMinimumSettlements(chain4.balances);
+  assert.equal(p4.length, 1);
+  assert.equal(p4[0].fromName, 'A');
+  assert.equal(p4[0].toName, 'D');
+  assert.equal(p4[0].amountPaise, 10000);
+  assert.equal(verifySettlements(chain4.balances, p4), true);
+
+  // S-06: closed cycle A -> B -> C -> A -> 0 payments
+  const cycle = calculateBalances(m3, [
+    { id: 'e1', amountPaise: 10000, paidBy: 'm2', shares: [{ memberId: 'm1', sharePaise: 10000 }] },
+    { id: 'e2', amountPaise: 10000, paidBy: 'm3', shares: [{ memberId: 'm2', sharePaise: 10000 }] },
+    { id: 'e3', amountPaise: 10000, paidBy: 'm1', shares: [{ memberId: 'm3', sharePaise: 10000 }] },
+  ]);
+  assert.deepEqual(computeMinimumSettlements(cycle.balances), []);
+});
+
+test('S-07 & S-08: greedy-failure traps and disjoint pairs achieve Bitmask DP optimum', () => {
+  // User prompt greedy trap: [+70000, +60000, -60000, -40000, -30000] -> 3 transactions (not 4)
+  const trap1 = [
+    { memberId: 'm1', name: 'A', netPaise: 70000 },
+    { memberId: 'm2', name: 'B', netPaise: 60000 },
+    { memberId: 'm3', name: 'C', netPaise: -60000 },
+    { memberId: 'm4', name: 'D', netPaise: -40000 },
+    { memberId: 'm5', name: 'E', netPaise: -30000 },
+  ];
+  const res1 = computeMinimumSettlements(trap1);
+  assert.equal(res1.length, 3);
+  assert.equal(verifySettlements(trap1, res1), true);
+
+  // edgecase.md S-07 trap: [+80000, +60000, -60000, -50000, -30000] -> 3 transactions
+  const trap2 = [
+    { memberId: 'm1', name: 'A', netPaise: 80000 },
+    { memberId: 'm2', name: 'B', netPaise: 60000 },
+    { memberId: 'm3', name: 'C', netPaise: -60000 },
+    { memberId: 'm4', name: 'D', netPaise: -50000 },
+    { memberId: 'm5', name: 'E', netPaise: -30000 },
+  ];
+  const res2 = computeMinimumSettlements(trap2);
+  assert.equal(res2.length, 3);
+  assert.equal(verifySettlements(trap2, res2), true);
+
+  // S-08: 3 disjoint exact pairs -> 3 payments (k - p = 6 - 3 = 3)
+  const pairs = [
+    { memberId: 'm1', name: 'A', netPaise: 10000 },
+    { memberId: 'm2', name: 'B', netPaise: -10000 },
+    { memberId: 'm3', name: 'C', netPaise: 20000 },
+    { memberId: 'm4', name: 'D', netPaise: -20000 },
+    { memberId: 'm5', name: 'E', netPaise: 30000 },
+    { memberId: 'm6', name: 'F', netPaise: -30000 },
+  ];
+  const resPairs = computeMinimumSettlements(pairs);
+  assert.equal(resPairs.length, 3);
+  assert.equal(verifySettlements(pairs, resPairs), true);
+});
+
+test('S-09: max-scale 10-member Bitmask DP settles optimally in well under 50ms', () => {
+  // Multi-subset optimal case: {+1000,-1000}, {+2000,-2000}, {+3500,-1500,-2000}, {+9000,-4000,-5000} -> 10 - 4 = 6 payments
+  const multiSubset10 = [
+    { memberId: 'm1', name: 'M1', netPaise: 1000 },
+    { memberId: 'm2', name: 'M2', netPaise: -1000 },
+    { memberId: 'm3', name: 'M3', netPaise: 2000 },
+    { memberId: 'm4', name: 'M4', netPaise: -2000 },
+    { memberId: 'm5', name: 'M5', netPaise: 3500 },
+    { memberId: 'm6', name: 'M6', netPaise: -1500 },
+    { memberId: 'm7', name: 'M7', netPaise: -2000 },
+    { memberId: 'm8', name: 'M8', netPaise: 9000 },
+    { memberId: 'm9', name: 'M9', netPaise: -4000 },
+    { memberId: 'm10', name: 'M10', netPaise: -5000 },
+  ];
+  const resMulti = computeMinimumSettlements(multiSubset10);
+  assert.equal(resMulti.length, 6);
+  assert.equal(verifySettlements(multiSubset10, resMulti), true);
+
+  // High-density zero-sum mask stress case (many zero-sum masks, 5 disjoint pairs -> 5 payments)
+  const dense10 = Array.from({ length: 10 }, (_, idx) => ({
+    memberId: `u${idx + 1}`,
+    name: `User${idx + 1}`,
+    netPaise: idx % 2 === 0 ? 10000 : -10000,
+  }));
+
+  const t0 = performance.now();
+  const resDense = computeMinimumSettlements(dense10);
+  const elapsedMs = performance.now() - t0;
+
+  assert.equal(resDense.length, 5);
+  assert.equal(verifySettlements(dense10, resDense), true);
+  assert.ok(elapsedMs < 50, `Expected 10-member DP < 50ms, took ${elapsedMs.toFixed(2)}ms`);
+  console.log(`  [benchmark] 10-member dense Bitmask DP completed in ${elapsedMs.toFixed(3)} ms`);
+});
+
+test('S-10, S-11 & Large ₹ Cap: fractional paise and >32-bit rupee sums settle cleanly without overflow', () => {
+  const members = makeMembers(['A', 'B', 'C']);
+  const fracExpense = {
+    id: 'e1',
+    title: 'Split 100',
+    amountPaise: 10000,
+    paidBy: 'm1',
+    splitType: 'equal',
+    shares: distributeEqual(10000, ['m1', 'm2', 'm3']), // [3334, 3333, 3333]
+  };
+  const { balances, netSumPaise } = calculateBalances(members, [fracExpense]);
+  assert.equal(netSumPaise, 0);
+  assert.deepEqual(balances.map((b) => b.netPaise), [6666, -3333, -3333]);
+
+  const payments = computeMinimumSettlements(balances);
+  assert.equal(payments.length, 2);
+  assert.deepEqual(payments.map((p) => p.amountPaise), [3333, 3333]);
+  assert.equal(verifySettlements(balances, payments), true);
+
+  // Guard against Int32 overflow (> 2^31 - 1 paise = ₹2,14,74,836.47) across multiple max-cap expenses
+  const highValueBalances = [
+    { memberId: 'm1', name: 'A', netPaise: 1_500_000_000 },
+    { memberId: 'm2', name: 'B', netPaise: 1_500_000_000 },
+    { memberId: 'm3', name: 'C', netPaise: -3_000_000_000 },
+  ];
+  const highPayments = computeMinimumSettlements(highValueBalances);
+  assert.equal(highPayments.length, 2);
+  assert.equal(verifySettlements(highValueBalances, highPayments), true);
+});
+
+test('T-01, T-02, T-03 & Invariants: settlements update balances cleanly and deleted expenses preserve zero-sum', () => {
+  const members = makeMembers(['Rahul', 'Priya', 'Aman']);
+  const dinner = {
+    id: 'e1',
+    title: 'Dinner',
+    amountPaise: 90000,
+    paidBy: 'm1',
+    shares: distributeEqual(90000, ['m1', 'm2', 'm3']),
+  };
+  const cab = {
+    id: 'e2',
+    title: 'Cab',
+    amountPaise: 30000,
+    paidBy: 'm2',
+    shares: distributeEqual(30000, ['m2', 'm3']),
+  };
+  const snacks = {
+    id: 'e3',
+    title: 'Snacks',
+    amountPaise: 15000,
+    paidBy: 'm3',
+    shares: distributeEqual(15000, ['m1', 'm2', 'm3']),
+  };
+
+  // T-01: mark Aman pays Rahul ₹350 settled
+  const settlement1 = { id: 's1', fromId: 'm3', toId: 'm1', amountPaise: 35000, createdAt: 5000 };
+  const afterSettle = calculateBalances(members, [dinner, cab, snacks], [settlement1]);
+  assert.equal(afterSettle.hasSettlements, true);
+  assert.equal(afterSettle.netSumPaise, 0);
+  const byName1 = Object.fromEntries(afterSettle.balances.map((b) => [b.name, b]));
+  assert.equal(byName1.Rahul.expensePaidPaise, 90000);
+  assert.equal(byName1.Rahul.settledInPaise, 35000);
+  assert.equal(byName1.Rahul.netPaise, 20000);
+  assert.equal(byName1.Aman.settledOutPaise, 35000);
+  assert.equal(byName1.Aman.netPaise, 0);
+
+  const remainingPayments = computeMinimumSettlements(afterSettle.balances);
+  assert.equal(remainingPayments.length, 1);
+  assert.equal(`${remainingPayments[0].fromName} pays ${remainingPayments[0].toName} ${formatRupees(remainingPayments[0].amountPaise)}`, 'Priya pays Rahul ₹200');
+  assert.equal(verifySettlements(afterSettle.balances, remainingPayments), true);
+
+  // T-02: undo settlement restores 2 payments cleanly
+  const afterUndo = calculateBalances(members, [dinner, cab, snacks], []);
+  assert.equal(afterUndo.hasSettlements, false);
+  assert.equal(computeMinimumSettlements(afterUndo.balances).length, 2);
+
+  // T-03: deleting Dinner AFTER settlement keeps zero-sum and flips net cleanly
+  const afterDeleteExpense = calculateBalances(members, [cab, snacks], [settlement1]);
+  assert.equal(afterDeleteExpense.netSumPaise, 0);
+  assert.equal(afterDeleteExpense.totalSpendPaise, 45000);
+  const postDeletePayments = computeMinimumSettlements(afterDeleteExpense.balances);
+  assert.equal(verifySettlements(afterDeleteExpense.balances, postDeletePayments), true);
+
+  // Invariant guards reject malformed / non-zero inputs loudly
+  assert.throws(
+    () => calculateBalances(members, [{ id: 'bad', amountPaise: 100, paidBy: 'm1', shares: [{ memberId: 'm2', sharePaise: 50 }] }]),
+    /Share conservation violated/
+  );
+  assert.throws(
+    () => calculateBalances(members, [], [{ fromId: 'm1', toId: 'm1', amountPaise: 100 }]),
+    /same sender and receiver/
+  );
+  assert.throws(
+    () => computeMinimumSettlements([{ memberId: 'm1', name: 'Rahul', netPaise: 100 }]),
+    /net balances sum to 100/
+  );
+  assert.throws(() => computeMinimumSettlements(null), TypeError);
+  assert.throws(
+    () => computeMinimumSettlements([{ memberId: 'm1', netPaise: 0 }, { memberId: 'm1', netPaise: 0 }]),
+    /Duplicate memberId/
+  );
+
+  // Max DP cap (k > 16) throws RangeError
+  const tooMany = Array.from({ length: 18 }, (_, idx) => ({
+    memberId: `x${idx}`,
+    name: `X${idx}`,
+    netPaise: idx % 2 === 0 ? 100 : -100,
+  }));
+  assert.throws(() => computeMinimumSettlements(tooMany), RangeError);
+
+  // Single-member zero-expense & malformed verifySettlements checks
+  const oneMemberBal = calculateBalances(makeMembers(['Solo']), [], []);
+  assert.equal(oneMemberBal.netSumPaise, 0);
+  assert.deepEqual(computeMinimumSettlements(oneMemberBal.balances), []);
+  assert.equal(verifySettlements([null], []), false);
+  assert.equal(verifySettlements([{ memberId: 'm1', netPaise: 100 }, { memberId: 'm2', netPaise: -100 }], [{ fromId: 'm2', toId: 'm2', amountPaise: 100 }]), false);
+  assert.equal(verifySettlements([{ memberId: 'm1', netPaise: 100 }, { memberId: 'm2', netPaise: -100 }], []), false);
+});
+
+console.log(`\nPhase 1 & Phase 2 core tests complete: ${passed} passed, 0 failed.`);
