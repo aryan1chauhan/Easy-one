@@ -1,5 +1,5 @@
 /**
- * Firebase Authentication (Google / Gmail, Phone OTP, Email/Password)
+ * Firebase Authentication (Google / Gmail and Email/Password)
  * and Cloud Firestore sync adapter for RupeeSync.
  *
  * Keeps core/store 100% functional offline in localStorage while syncing across
@@ -38,43 +38,16 @@ async function loadFirebaseSdk() {
   return sdkCache;
 }
 
-/**
- * Normalizes a phone number input into E.164 format.
- * Defaults 10-digit Indian mobile numbers cleanly to `+91...`.
- *
- * @param {string} rawPhone
- * @returns {string}
- */
-export function normalizePhoneE164(rawPhone) {
-  const trimmed = String(rawPhone ?? '').replace(/[\s()-]+/g, '');
-  if (!trimmed) {
-    return '';
-  }
-  if (trimmed.startsWith('+')) {
-    return trimmed;
-  }
-  if (/^\d{10}$/.test(trimmed)) {
-    return `+91${trimmed}`;
-  }
-  if (/^0\d{10}$/.test(trimmed)) {
-    return `+91${trimmed.slice(1)}`;
-  }
-  return `+${trimmed}`;
-}
-
-function formatAuthError(err, method = 'default') {
+function formatAuthError(err) {
   const code = err?.code ?? '';
   switch (code) {
     case 'auth/popup-closed-by-user':
       return 'Google sign-in popup was closed before finishing.';
     case 'auth/popup-blocked':
-      return 'Popup was blocked by your browser. Allow popups or use Phone/Email sign-in.';
+      return 'Popup was blocked by your browser. Allow popups or use Email & Password sign-in.';
     case 'auth/unauthorized-domain':
       return 'This domain must be added under Firebase Console → Authentication → Settings → Authorized domains.';
     case 'auth/operation-not-allowed':
-      if (method === 'phone') {
-        return 'Phone OTP sign-in is currently unavailable. Please continue with Google or Email & Password.';
-      }
       return 'This sign-in method is currently unavailable. Please try another option.';
     case 'auth/invalid-email':
       return 'Enter a valid email / Gmail address.';
@@ -86,12 +59,6 @@ function formatAuthError(err, method = 'default') {
       return 'An account with this email already exists. Switch to Sign In instead.';
     case 'auth/weak-password':
       return 'Password must be at least 6 characters long.';
-    case 'auth/invalid-phone-number':
-      return 'Enter a valid phone number with country code (e.g. +91 9876543210).';
-    case 'auth/invalid-verification-code':
-      return 'Incorrect 6-digit OTP code. Double-check the SMS and try again.';
-    case 'auth/code-expired':
-      return 'This OTP has expired. Request a new code.';
     case 'auth/too-many-requests':
       return 'Too many attempts right now. Wait a moment and try again.';
     default:
@@ -106,7 +73,7 @@ function formatAuthError(err, method = 'default') {
  *   store: ReturnType<import('./store.js').createStore>,
  *   onStatusChange: (status: {
  *     ready: boolean,
- *     user: { uid: string, displayName: string, email: string, phoneNumber: string } | null,
+ *     user: { uid: string, displayName: string, email: string } | null,
  *     syncState: 'local' | 'syncing' | 'synced' | 'error',
  *     syncMessage: string,
  *   }) => void,
@@ -119,8 +86,6 @@ export function createCloudSync({ store, onStatusChange }) {
   let ready = false;
   let isHydrating = false;
   let saveTimer = null;
-  let confirmationResult = null;
-  let recaptchaVerifier = null;
   const syncedActivityIds = new Set();
 
   function emitStatus() {
@@ -131,7 +96,6 @@ export function createCloudSync({ store, onStatusChange }) {
             uid: currentUser.uid,
             displayName: currentUser.displayName ?? '',
             email: currentUser.email ?? '',
-            phoneNumber: currentUser.phoneNumber ?? '',
           }
         : null,
       syncState,
@@ -315,60 +279,6 @@ export function createCloudSync({ store, onStatusChange }) {
     }
   }
 
-  async function sendPhoneOtp(rawPhone, recaptchaContainerId) {
-    const phone = normalizePhoneE164(rawPhone);
-    if (!/^\+[1-9]\d{7,14}$/.test(phone)) {
-      return {
-        ok: false,
-        error: 'Enter a valid 10-digit mobile number or full international format (e.g. +919876543210).',
-      };
-    }
-
-    try {
-      const { auth, authMod } = await loadFirebaseSdk();
-      if (recaptchaVerifier) {
-        try {
-          recaptchaVerifier.clear();
-        } catch {
-          // Ignore already-cleared verifier
-        }
-        recaptchaVerifier = null;
-      }
-      recaptchaVerifier = new authMod.RecaptchaVerifier(auth, recaptchaContainerId, {
-        size: 'invisible',
-      });
-      confirmationResult = await authMod.signInWithPhoneNumber(auth, phone, recaptchaVerifier);
-      return { ok: true, phone, error: null };
-    } catch (err) {
-      if (recaptchaVerifier) {
-        try {
-          recaptchaVerifier.clear();
-        } catch {
-          // Ignore cleanup errors
-        }
-        recaptchaVerifier = null;
-      }
-      return { ok: false, error: formatAuthError(err, 'phone') };
-    }
-  }
-
-  async function confirmPhoneOtp(rawCode) {
-    const code = String(rawCode ?? '').trim();
-    if (!/^\d{6}$/.test(code)) {
-      return { ok: false, error: 'Enter the 6-digit OTP sent to your phone.' };
-    }
-    if (!confirmationResult) {
-      return { ok: false, error: 'Request an OTP code first.' };
-    }
-    try {
-      await confirmationResult.confirm(code);
-      confirmationResult = null;
-      return { ok: true, error: null };
-    } catch (err) {
-      return { ok: false, error: formatAuthError(err, 'phone') };
-    }
-  }
-
   async function signOutUser() {
     try {
       if (saveTimer && currentUser) {
@@ -390,8 +300,6 @@ export function createCloudSync({ store, onStatusChange }) {
     signInWithEmail,
     registerWithEmail,
     sendPasswordReset,
-    sendPhoneOtp,
-    confirmPhoneOtp,
     signOutUser,
   };
 }

@@ -7,7 +7,7 @@ A zero-dependency, client-side multi-view web application for tracking shared gr
 ## Tech Stack
 
 - **Frontend:** Pure HTML5, CSS3, and native ES6+ modules (`<script type="module">`) — zero frameworks or bundlers (Firebase Auth & Firestore v11 SDK modules load lazily from `gstatic.com` only for optional Cloud Sync)
-- **Persistence & Sync:** Offline-first browser `localStorage` (`expense_splitter_state_v1`, `expense_splitter_activity_v1`), plus optional Firebase Auth (Google / Gmail, Phone OTP, Email/Password) and UID-scoped Cloud Firestore sync with append-only activity rules and clean offline fallback
+- **Persistence & Sync:** Offline-first browser `localStorage` (`expense_splitter_state_v1`, `expense_splitter_activity_v1`), plus optional Firebase Auth (Google / Gmail and Email/Password) and UID-scoped Cloud Firestore sync with append-only activity rules and clean offline fallback
 - **Automated Tests:** Zero-dependency Node.js test suites (`node:assert/strict`, verified on Node.js v23.10.0)
 
 ## How to Run Locally
@@ -79,11 +79,11 @@ node tests/state.test.js
 │   ├── state/                  # Observable state, persistence & optional Cloud Sync layer
 │   │   ├── storage.js          # Versioned localStorage schema guard, multi-group & activity storage
 │   │   ├── store.js            # Reactive pub-sub store with canonical state snapshots
-│   │   └── cloudSync.js        # Firebase Auth (Google, Phone OTP, Email) & Firestore sync adapter
+│   │   └── cloudSync.js        # Firebase Auth (Google, Email) & Firestore sync adapter
 │   └── ui/                     # XSS-safe DOM controllers (textContent & createElementNS only)
 │       ├── domHelpers.js       # Element creation, SVG icons, avatar badges & inline alerts
 │       ├── modalView.js        # Accessible Reset Group <dialog> modal controller
-│       ├── authModalView.js    # Account & Cloud Sync <dialog> controller (Google, Phone OTP, Email)
+│       ├── authModalView.js    # Account & Cloud Sync <dialog> controller (Google, Email)
 │       ├── overviewView.js     # RupeeSync hero balance card, meters, payees strip & quick actions
 │       ├── memberView.js       # Group members chips, count badge, and inline validation
 │       ├── expenseFormView.js  # Add Expense modal composer (Equal / Exact / Percentage modes)

@@ -11,7 +11,6 @@ import {
   saveState,
 } from '../src/state/storage.js';
 import { createStore } from '../src/state/store.js';
-import { normalizePhoneE164 } from '../src/state/cloudSync.js';
 
 let passed = 0;
 
@@ -533,12 +532,7 @@ test('Multi-Group Switching, Group Naming, Category Filter & Reload Persistence'
   assert.ok(s2.getDerivedState().activityFeed.some((e) => e.type === 'group_created'));
 });
 
-test('Cloud Sync Helpers: E.164 Phone Normalization & Non-Destructive Activity Hydration', () => {
-  assert.equal(normalizePhoneE164('9876543210'), '+919876543210');
-  assert.equal(normalizePhoneE164('09876543210'), '+919876543210');
-  assert.equal(normalizePhoneE164('+1 (415) 555-0100'), '+14155550100');
-  assert.equal(normalizePhoneE164('  '), '');
-
+test('Cloud Sync Helpers: Non-Destructive Activity Hydration', () => {
   const storage = createMemoryStorage();
   const s = createStore({ storage });
   const r = s.addMember('Rahul').member;

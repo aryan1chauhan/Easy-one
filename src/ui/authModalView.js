@@ -1,6 +1,6 @@
 /**
  * Accessible Authentication & Cloud Account Modal (<dialog id="auth-dialog">):
- * supports Google (Gmail) Sign-In, Phone Number (SMS OTP), and Email/Password auth.
+ * supports Google (Gmail) Sign-In and Email/Password auth.
  */
 
 import { clearInlineError, el, setChildren, setInlineError, svgIcon } from './domHelpers.js';
@@ -17,10 +17,7 @@ import { clearInlineError, el, setChildren, setInlineError, svgIcon } from './do
  * }} deps
  */
 export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, cloudSync }) {
-  let activeMethod = 'phone'; // 'phone' | 'email'
   let emailMode = 'signin'; // 'signin' | 'signup'
-  let otpStep = 'request'; // 'request' | 'verify'
-  let pendingPhoneDisplay = '';
   let currentStatus = {
     ready: false,
     user: null,
@@ -64,7 +61,6 @@ export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, clou
       if (currentStatus.user) {
         const label =
           currentStatus.user.email ||
-          currentStatus.user.phoneNumber ||
           currentStatus.user.displayName ||
           'Signed in';
         const dotClass =
@@ -100,12 +96,8 @@ export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, clou
       const label =
         currentStatus.user.displayName ||
         currentStatus.user.email ||
-        currentStatus.user.phoneNumber ||
         'Account';
-      const subLabel =
-        currentStatus.user.email && currentStatus.user.phoneNumber
-          ? `${currentStatus.user.email} · ${currentStatus.user.phoneNumber}`
-          : currentStatus.user.email || currentStatus.user.phoneNumber || currentStatus.user.uid;
+      const subLabel = currentStatus.user.email || currentStatus.user.uid;
 
       const card = el('div', { className: 'auth-account-panel' });
       const profileBox = el('div', { className: 'auth-profile-box' });
@@ -140,7 +132,7 @@ export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, clou
     stack.append(
       el('p', {
         className: 'auth-lead',
-        text: 'Sign in with Gmail or your phone number to save your groups, balances, and permanent audit history across devices.',
+        text: 'Sign in with Google (Gmail) or Email & Password to save your groups, balances, and permanent audit history across devices.',
       })
     );
 
@@ -166,215 +158,94 @@ export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, clou
     });
 
     const divider = el('div', { className: 'auth-divider' });
-    divider.append(el('span', { text: 'or continue with' }));
+    divider.append(el('span', { text: 'or continue with email' }));
 
-    // 2. Tabs: Phone OTP | Email & Password
-    const methodTabs = el('div', { className: 'split-tabs auth-method-tabs' });
-    const phoneTab = el('button', {
-      className: activeMethod === 'phone' ? 'split-tab is-active' : 'split-tab',
-      text: 'Phone (OTP)',
-      attrs: { type: 'button', 'aria-pressed': String(activeMethod === 'phone') },
+    stack.append(googleBtn, divider);
+
+    const emailForm = el('form', { className: 'form-stack', attrs: { novalidate: '' } });
+    const emailInput = el('input', {
+      attrs: {
+        id: 'auth-email-input',
+        type: 'email',
+        placeholder: 'you@gmail.com',
+        autocomplete: 'email',
+      },
     });
-    const emailTab = el('button', {
-      className: activeMethod === 'email' ? 'split-tab is-active' : 'split-tab',
-      text: 'Email & Password',
-      attrs: { type: 'button', 'aria-pressed': String(activeMethod === 'email') },
+    const passInput = el('input', {
+      attrs: {
+        id: 'auth-password-input',
+        type: 'password',
+        placeholder: 'Minimum 6 characters',
+        autocomplete: emailMode === 'signin' ? 'current-password' : 'new-password',
+      },
     });
-    phoneTab.addEventListener('click', () => {
-      activeMethod = 'phone';
+    const submitBtn = el('button', {
+      className: 'btn btn-secondary',
+      text: emailMode === 'signin' ? 'Sign In with Email' : 'Create Account',
+      attrs: { type: 'submit', id: 'auth-email-submit-btn' },
+    });
+
+    const footLinks = el('div', { className: 'auth-foot-links' });
+    const toggleModeBtn = el('button', {
+      className: 'link-btn',
+      text: emailMode === 'signin' ? 'New user? Create account' : 'Already have an account? Sign in',
+      attrs: { type: 'button' },
+    });
+    toggleModeBtn.addEventListener('click', () => {
+      emailMode = emailMode === 'signin' ? 'signup' : 'signin';
       renderDialogBody();
     });
-    emailTab.addEventListener('click', () => {
-      activeMethod = 'email';
-      renderDialogBody();
+
+    const resetBtn = el('button', {
+      className: 'link-btn',
+      text: 'Forgot password?',
+      attrs: { type: 'button' },
     });
-    methodTabs.append(phoneTab, emailTab);
-
-    stack.append(googleBtn, divider, methodTabs);
-
-    // invisible reCAPTCHA anchor
-    const recaptchaHost = el('div', { attrs: { id: 'auth-recaptcha-container' } });
-
-    if (activeMethod === 'phone') {
-      const phoneForm = el('form', { className: 'form-stack', attrs: { novalidate: '' } });
-      if (otpStep === 'request') {
-        const phoneInput = el('input', {
-          attrs: {
-            id: 'auth-phone-input',
-            type: 'tel',
-            inputmode: 'tel',
-            placeholder: 'e.g. 9876543210 or +91 9876543210',
-            autocomplete: 'tel',
-          },
-        });
-        const sendBtn = el('button', {
-          className: 'btn btn-secondary',
-          text: 'Send OTP',
-          attrs: { type: 'submit', id: 'auth-send-otp-btn' },
-        });
-        phoneForm.append(
-          el('label', { className: 'field-label', text: 'Mobile Number', attrs: { for: 'auth-phone-input' } }),
-          phoneInput,
-          recaptchaHost,
-          errorEl,
-          sendBtn
-        );
-        phoneInput.addEventListener('input', () => clearInlineError(errorEl));
-        phoneForm.addEventListener('submit', async (event) => {
-          event.preventDefault();
-          clearInlineError(errorEl);
-          sendBtn.disabled = true;
-          sendBtn.textContent = 'Sending...';
-          const res = await cloudSync.sendPhoneOtp(phoneInput.value, 'auth-recaptcha-container');
-          sendBtn.disabled = false;
-          sendBtn.textContent = 'Send OTP';
-          if (!res.ok) {
-            setInlineError(errorEl, res.error);
-            return;
-          }
-          pendingPhoneDisplay = res.phone;
-          otpStep = 'verify';
-          renderDialogBody();
-        });
-      } else {
-        const otpInput = el('input', {
-          attrs: {
-            id: 'auth-otp-input',
-            type: 'text',
-            inputmode: 'numeric',
-            maxlength: '6',
-            placeholder: '6-digit code',
-            autocomplete: 'one-time-code',
-          },
-        });
-        const verifyBtn = el('button', {
-          className: 'btn btn-primary',
-          text: 'Verify OTP & Sign In',
-          attrs: { type: 'submit', id: 'auth-verify-otp-btn' },
-        });
-        const backBtn = el('button', {
-          className: 'link-btn',
-          text: `Change number (${pendingPhoneDisplay})`,
-          attrs: { type: 'button' },
-        });
-        backBtn.addEventListener('click', () => {
-          otpStep = 'request';
-          renderDialogBody();
-        });
-
-        phoneForm.append(
-          el('label', {
-            className: 'field-label',
-            text: `Enter OTP sent to ${pendingPhoneDisplay}`,
-            attrs: { for: 'auth-otp-input' },
-          }),
-          otpInput,
-          errorEl,
-          verifyBtn,
-          backBtn
-        );
-        otpInput.addEventListener('input', () => clearInlineError(errorEl));
-        phoneForm.addEventListener('submit', async (event) => {
-          event.preventDefault();
-          clearInlineError(errorEl);
-          verifyBtn.disabled = true;
-          const res = await cloudSync.confirmPhoneOtp(otpInput.value);
-          verifyBtn.disabled = false;
-          if (!res.ok) {
-            setInlineError(errorEl, res.error);
-            return;
-          }
-          otpStep = 'request';
-          closeDialog();
-        });
+    resetBtn.addEventListener('click', async () => {
+      clearInlineError(errorEl);
+      infoEl.hidden = true;
+      const emailVal = emailInput.value.trim();
+      if (!emailVal) {
+        setInlineError(errorEl, 'Enter your email address above first to receive a reset link.');
+        return;
       }
-      stack.append(phoneForm);
-    } else {
-      const emailForm = el('form', { className: 'form-stack', attrs: { novalidate: '' } });
-      const emailInput = el('input', {
-        attrs: {
-          id: 'auth-email-input',
-          type: 'email',
-          placeholder: 'you@gmail.com',
-          autocomplete: 'email',
-        },
-      });
-      const passInput = el('input', {
-        attrs: {
-          id: 'auth-password-input',
-          type: 'password',
-          placeholder: 'Minimum 6 characters',
-          autocomplete: emailMode === 'signin' ? 'current-password' : 'new-password',
-        },
-      });
-      const submitBtn = el('button', {
-        className: 'btn btn-secondary',
-        text: emailMode === 'signin' ? 'Sign In with Email' : 'Create Account',
-        attrs: { type: 'submit', id: 'auth-email-submit-btn' },
-      });
+      const res = await cloudSync.sendPasswordReset(emailVal);
+      if (!res.ok) {
+        setInlineError(errorEl, res.error);
+        return;
+      }
+      infoEl.textContent = `Password reset email sent to ${emailVal}.`;
+      infoEl.hidden = false;
+    });
 
-      const footLinks = el('div', { className: 'auth-foot-links' });
-      const toggleModeBtn = el('button', {
-        className: 'link-btn',
-        text: emailMode === 'signin' ? 'New user? Create account' : 'Already have an account? Sign in',
-        attrs: { type: 'button' },
-      });
-      toggleModeBtn.addEventListener('click', () => {
-        emailMode = emailMode === 'signin' ? 'signup' : 'signin';
-        renderDialogBody();
-      });
+    footLinks.append(toggleModeBtn, resetBtn);
+    emailForm.append(
+      el('label', { className: 'field-label', text: 'Email / Gmail', attrs: { for: 'auth-email-input' } }),
+      emailInput,
+      el('label', { className: 'field-label', text: 'Password', attrs: { for: 'auth-password-input' } }),
+      passInput,
+      errorEl,
+      infoEl,
+      submitBtn,
+      footLinks
+    );
 
-      const resetBtn = el('button', {
-        className: 'link-btn',
-        text: 'Forgot password?',
-        attrs: { type: 'button' },
-      });
-      resetBtn.addEventListener('click', async () => {
-        clearInlineError(errorEl);
-        infoEl.hidden = true;
-        const emailVal = emailInput.value.trim();
-        if (!emailVal) {
-          setInlineError(errorEl, 'Enter your email address above first to receive a reset link.');
-          return;
-        }
-        const res = await cloudSync.sendPasswordReset(emailVal);
-        if (!res.ok) {
-          setInlineError(errorEl, res.error);
-          return;
-        }
-        infoEl.textContent = `Password reset email sent to ${emailVal}.`;
-        infoEl.hidden = false;
-      });
-
-      footLinks.append(toggleModeBtn, resetBtn);
-      emailForm.append(
-        el('label', { className: 'field-label', text: 'Email / Gmail', attrs: { for: 'auth-email-input' } }),
-        emailInput,
-        el('label', { className: 'field-label', text: 'Password', attrs: { for: 'auth-password-input' } }),
-        passInput,
-        errorEl,
-        infoEl,
-        submitBtn,
-        footLinks
-      );
-
-      emailInput.addEventListener('input', () => clearInlineError(errorEl));
-      passInput.addEventListener('input', () => clearInlineError(errorEl));
-      emailForm.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        clearInlineError(errorEl);
-        submitBtn.disabled = true;
-        const fn = emailMode === 'signin' ? cloudSync.signInWithEmail : cloudSync.registerWithEmail;
-        const res = await fn(emailInput.value, passInput.value);
-        submitBtn.disabled = false;
-        if (!res.ok) {
-          setInlineError(errorEl, res.error);
-          return;
-        }
-        closeDialog();
-      });
-      stack.append(emailForm);
-    }
+    emailInput.addEventListener('input', () => clearInlineError(errorEl));
+    passInput.addEventListener('input', () => clearInlineError(errorEl));
+    emailForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      clearInlineError(errorEl);
+      submitBtn.disabled = true;
+      const fn = emailMode === 'signin' ? cloudSync.signInWithEmail : cloudSync.registerWithEmail;
+      const res = await fn(emailInput.value, passInput.value);
+      submitBtn.disabled = false;
+      if (!res.ok) {
+        setInlineError(errorEl, res.error);
+        return;
+      }
+      closeDialog();
+    });
+    stack.append(emailForm);
 
     setChildren(bodyEl, [stack]);
   }
