@@ -8,7 +8,6 @@
  */
 
 const FIREBASE_SDK_BASE = 'https://www.gstatic.com/firebasejs/11.6.0';
-const VERCEL_PROXY_HOST = 'easy-one-coral.vercel.app';
 
 const FIREBASE_CONFIG = {
   projectId: 'rupeesync-split-2026',
@@ -19,8 +18,8 @@ const FIREBASE_CONFIG = {
   messagingSenderId: '1027025841290',
 };
 
-export function resolveAuthDomain(host = typeof window !== 'undefined' ? window.location?.host ?? '' : '') {
-  return host === VERCEL_PROXY_HOST ? VERCEL_PROXY_HOST : FIREBASE_CONFIG.authDomain;
+export function resolveAuthDomain() {
+  return FIREBASE_CONFIG.authDomain;
 }
 
 let sdkCache = null;
@@ -106,11 +105,7 @@ function writeRedirectPendingFlag(active) {
 export function isSameOriginAuthHost(
   host = typeof window !== 'undefined' ? window.location?.hostname ?? '' : ''
 ) {
-  return (
-    host === FIREBASE_CONFIG.authDomain ||
-    host === `${FIREBASE_CONFIG.projectId}.web.app` ||
-    host === VERCEL_PROXY_HOST
-  );
+  return host === FIREBASE_CONFIG.authDomain || host === `${FIREBASE_CONFIG.projectId}.web.app`;
 }
 
 /**
