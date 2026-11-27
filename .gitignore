@@ -1,3 +1,57 @@
+# Existing rules
 .DS_Store
 node_modules/
 *.log
+
+# Secrets and credentials
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+.aws/
+credentials.json
+serviceAccountKey.json
+*.tfvars
+terraform.tfstate
+
+# Dependencies and build output
+.pnp
+.yarn/cache
+.next/
+out/
+dist/
+build/
+.turbo/
+.vercel/
+.cache/
+coverage/
+npm-debug.log*
+yarn-error.log*
+
+# Archives, dumps, and generated artifacts
+*.zip
+*.tar
+*.gz
+*.rar
+*.sql
+*.sqlite
+*.db
+
+# OS, IDE, and temporary files
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.tmp
+*.bak
+*.swp
+*~
+
