@@ -138,14 +138,23 @@ export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, clou
     );
 
     // 1. Google (Gmail) Button
+    const isInitializing = !currentStatus.ready && currentStatus.syncMessage !== 'Offline mode (saved locally)';
     const googleBtn = el('button', {
       className: 'btn btn-primary auth-google-btn',
-      attrs: { type: 'button', id: 'auth-google-btn' },
+      attrs: {
+        type: 'button',
+        id: 'auth-google-btn',
+        ...(isInitializing ? { disabled: '' } : {}),
+      },
     });
-    googleBtn.append(
-      svgIcon('google', { size: 17 }),
-      el('span', { text: 'Continue with Google (Gmail)' })
-    );
+    const googleBtnLabel = el('span', {
+      className: 'auth-google-label',
+      text: isInitializing ? 'Preparing Google Sign-In...' : 'Continue with Google (Gmail)',
+    });
+    googleBtn.append(svgIcon('google', { size: 17 }), googleBtnLabel);
+    if (!currentStatus.user && currentStatus.syncState === 'error' && currentStatus.syncMessage) {
+      setInlineError(errorEl, currentStatus.syncMessage);
+    }
     googleBtn.addEventListener('click', async () => {
       clearInlineError(errorEl);
       googleBtn.disabled = true;
@@ -258,8 +267,23 @@ export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, clou
     const prevUser = currentStatus.user;
     currentStatus = nextStatus;
     updateTriggerButtons();
-    if (dialog.open && (Boolean(prevUser) !== Boolean(nextStatus.user) || Boolean(nextStatus.user))) {
+    if (!dialog.open) {
+      return;
+    }
+    if (Boolean(prevUser) !== Boolean(nextStatus.user) || Boolean(nextStatus.user)) {
       renderDialogBody();
+      return;
+    }
+    const gBtn = bodyEl.querySelector('#auth-google-btn');
+    const gLabel = bodyEl.querySelector('.auth-google-label');
+    const errEl = bodyEl.querySelector('.error-msg');
+    if (gBtn && gLabel) {
+      const isInitializing = !nextStatus.ready && nextStatus.syncMessage !== 'Offline mode (saved locally)';
+      gBtn.disabled = isInitializing;
+      gLabel.textContent = isInitializing ? 'Preparing Google Sign-In...' : 'Continue with Google (Gmail)';
+    }
+    if (errEl && nextStatus.syncState === 'error' && nextStatus.syncMessage) {
+      setInlineError(errEl, nextStatus.syncMessage);
     }
   }
 

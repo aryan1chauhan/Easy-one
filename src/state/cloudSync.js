@@ -52,7 +52,7 @@ function formatAuthError(err) {
     case 'auth/popup-closed-by-user':
       return 'Google sign-in popup was closed before finishing.';
     case 'auth/popup-blocked':
-      return 'Popup was blocked by your browser. Allow popups or use Email & Password sign-in.';
+      return 'Popup was blocked by your browser. Allow popups for this site in your address bar and try again, or use Email & Password sign-in.';
     case 'auth/unauthorized-domain':
       return 'This domain must be added under Firebase Console → Authentication → Settings → Authorized domains.';
     case 'auth/operation-not-allowed':
@@ -74,6 +74,37 @@ function formatAuthError(err) {
   }
 }
 
+const REDIRECT_PENDING_KEY = 'rupeesync_google_redirect_pending';
+
+function readRedirectPendingFlag() {
+  try {
+    return typeof window !== 'undefined' && window.sessionStorage?.getItem(REDIRECT_PENDING_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeRedirectPendingFlag(active) {
+  try {
+    if (typeof window === 'undefined' || !window.sessionStorage) return;
+    if (active) {
+      window.sessionStorage.setItem(REDIRECT_PENDING_KEY, '1');
+    } else {
+      window.sessionStorage.removeItem(REDIRECT_PENDING_KEY);
+    }
+  } catch {
+    // Ignore storage restrictions cleanly
+  }
+}
+
+function isSameOriginAuthHost() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  const host = window.location?.hostname ?? '';
+  return host === FIREBASE_CONFIG.authDomain || host === `${FIREBASE_CONFIG.projectId}.web.app`;
+}
+
 /**
  * Creates the cloud authentication & Firestore synchronization controller.
  *
@@ -86,9 +117,15 @@ function formatAuthError(err) {
  *     syncMessage: string,
  *   }) => void,
  *   sdkLoader?: () => Promise<any>,
+ *   allowRedirectFallback?: () => boolean,
  * }} deps
  */
-export function createCloudSync({ store, onStatusChange, sdkLoader = loadFirebaseSdk }) {
+export function createCloudSync({
+  store,
+  onStatusChange,
+  sdkLoader = loadFirebaseSdk,
+  allowRedirectFallback = isSameOriginAuthHost,
+}) {
   let currentUser = null;
   let syncState = 'local';
   let syncMessage = 'Saved locally in this browser';
@@ -255,11 +292,23 @@ export function createCloudSync({ store, onStatusChange, sdkLoader = loadFirebas
       });
 
       if (typeof authMod.getRedirectResult === 'function') {
-        authMod.getRedirectResult(auth).catch((err) => {
-          syncState = 'error';
-          syncMessage = formatAuthError(err);
-          emitStatus();
-        });
+        const hadPendingRedirect = readRedirectPendingFlag();
+        writeRedirectPendingFlag(false);
+        authMod.getRedirectResult(auth).then(
+          (result) => {
+            if (hadPendingRedirect && !result?.user && !auth.currentUser) {
+              syncState = 'error';
+              syncMessage =
+                'Google redirect sign-in could not complete in this browser. Allow popups for Google sign-in or use Email & Password.';
+              emitStatus();
+            }
+          },
+          (err) => {
+            syncState = 'error';
+            syncMessage = formatAuthError(err);
+            emitStatus();
+          }
+        );
       }
     } catch {
       ready = false;
@@ -275,10 +324,20 @@ export function createCloudSync({ store, onStatusChange, sdkLoader = loadFirebas
     return authMod.signInWithPopup(auth, provider).then(
       () => ({ ok: true, error: null, redirected: false }),
       (err) => {
-        if (err?.code === 'auth/popup-blocked' && typeof authMod.signInWithRedirect === 'function') {
+        // Cross-origin signInWithRedirect silently drops credentials under browser storage partitioning;
+        // only fall back to redirect when authDomain matches the current origin.
+        if (
+          err?.code === 'auth/popup-blocked' &&
+          allowRedirectFallback() &&
+          typeof authMod.signInWithRedirect === 'function'
+        ) {
+          writeRedirectPendingFlag(true);
           return authMod.signInWithRedirect(auth, provider).then(
             () => ({ ok: true, error: null, redirected: true }),
-            (redirectErr) => ({ ok: false, error: formatAuthError(redirectErr), redirected: false })
+            (redirectErr) => {
+              writeRedirectPendingFlag(false);
+              return { ok: false, error: formatAuthError(redirectErr), redirected: false };
+            }
           );
         }
         return { ok: false, error: formatAuthError(err), redirected: false };
@@ -287,15 +346,23 @@ export function createCloudSync({ store, onStatusChange, sdkLoader = loadFirebas
   }
 
   function signInWithGoogle() {
-    // Call signInWithPopup synchronously inside the click gesture once SDK is cached.
+    // Only invoke signInWithPopup synchronously while user-activation is live;
+    // calling it after an async network fetch causes browsers to block the popup.
     if (resolvedSdk) {
       return startGoogleAuth(resolvedSdk);
     }
-    return getSdk().then(startGoogleAuth, (err) => ({
-      ok: false,
-      error: formatAuthError(err),
-      redirected: false,
-    }));
+    return getSdk().then(
+      () => ({
+        ok: false,
+        error: 'Google Sign-In is ready now — click Continue with Google once more.',
+        redirected: false,
+      }),
+      (err) => ({
+        ok: false,
+        error: formatAuthError(err),
+        redirected: false,
+      })
+    );
   }
 
   async function signInWithEmail(email, password) {

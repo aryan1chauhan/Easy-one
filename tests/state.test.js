@@ -623,14 +623,31 @@ async function runAsyncCloudSyncTests() {
     },
   };
 
+  // 1. Cold-click before SDK loads warms SDK without calling async popup
+  const coldSync = createCloudSync({
+    store,
+    onStatusChange() {},
+    sdkLoader: async () => mockSdk,
+    allowRedirectFallback: () => false,
+  });
+  const resCold = await coldSync.signInWithGoogle();
+  assert.equal(resCold.ok, false);
+  assert.match(resCold.error, /ready now/i);
+  assert.equal(
+    events.some(([name]) => name === 'signInWithPopup'),
+    false,
+    'signInWithPopup must not run asynchronously after network SDK load'
+  );
+
   const sync = createCloudSync({
     store,
     onStatusChange() {},
     sdkLoader: async () => mockSdk,
+    allowRedirectFallback: () => false,
   });
   await sync.init();
 
-  // 1. Synchronous invocation of signInWithPopup once SDK is cached
+  // 2. Synchronous invocation of signInWithPopup once SDK is cached
   const beforeLen = events.length;
   const pSync = sync.signInWithGoogle();
   assert.equal(
@@ -641,20 +658,38 @@ async function runAsyncCloudSyncTests() {
   const resOk = await pSync;
   assert.deepEqual(resOk, { ok: true, error: null, redirected: false });
 
-  // 2. auth/popup-blocked automatically falls back to signInWithRedirect
+  // 3. Cross-origin auth/popup-blocked shows clear popup guidance instead of broken redirect
   popupMode = 'blocked';
-  const resRedirect = await sync.signInWithGoogle();
+  const resCrossBlocked = await sync.signInWithGoogle();
+  assert.equal(resCrossBlocked.ok, false);
+  assert.equal(resCrossBlocked.redirected, false);
+  assert.match(resCrossBlocked.error, /Allow popups/i);
+  assert.equal(
+    events.some(([name]) => name === 'signInWithRedirect'),
+    false,
+    'cross-origin host must not silently fall back to signInWithRedirect'
+  );
+
+  // 4. Same-origin host falls back to signInWithRedirect on auth/popup-blocked
+  const sameOriginSync = createCloudSync({
+    store,
+    onStatusChange() {},
+    sdkLoader: async () => mockSdk,
+    allowRedirectFallback: () => true,
+  });
+  await sameOriginSync.init();
+  const resRedirect = await sameOriginSync.signInWithGoogle();
   assert.deepEqual(resRedirect, { ok: true, error: null, redirected: true });
   assert.equal(
     events.some(([name]) => name === 'signInWithRedirect'),
     true,
-    'signInWithRedirect fallback should trigger on auth/popup-blocked'
+    'same-origin signInWithRedirect fallback should trigger on auth/popup-blocked'
   );
 
-  // 3. User-cancelled popup surfaces error cleanly without redirect
+  // 5. User-cancelled popup surfaces error cleanly without redirect
   const redirectCountBefore = events.filter(([name]) => name === 'signInWithRedirect').length;
   popupMode = 'closed';
-  const resClosed = await sync.signInWithGoogle();
+  const resClosed = await sameOriginSync.signInWithGoogle();
   assert.equal(resClosed.ok, false);
   assert.match(resClosed.error, /closed before finishing/i);
   assert.equal(
@@ -663,7 +698,7 @@ async function runAsyncCloudSyncTests() {
   );
 
   passed += 1;
-  console.log('PASS: Cloud Sync: synchronous Google popup invocation & auth/popup-blocked redirect fallback');
+  console.log('PASS: Cloud Sync: synchronous Google popup, cold-click guard, and same-origin redirect fallback');
 }
 
 await runAsyncCloudSyncTests();
