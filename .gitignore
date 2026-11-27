@@ -55,3 +55,8 @@ desktop.ini
 *.swp
 *~
 
+# Local agent instructions & planning docs (keep local only, never push)
+AGENTS.md
+Instruction.md
+docs/
+
