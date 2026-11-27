@@ -1,5 +1,7 @@
 # RupeeSync · Expense Splitter (`Easy-one`)
 
+**Live App:** [https://easy-one-coral.vercel.app](https://easy-one-coral.vercel.app)
+
 A zero-dependency, client-side multi-view web application for tracking shared group expenses (2–10 members) in Indian Rupees (`₹`), viewing interactive spending analytics, inspecting per-friend breakdowns and an immutable audit log, and simplifying settlements to the mathematically minimum number of transactions.
 
 ## Tech Stack
@@ -57,6 +59,7 @@ node tests/state.test.js
 - [x] **Filter & Search Expenses + View-As Perspective:** Filter by member (`U-03`, `U-04`, `M-12`), category, or search query; inspect month-grouped ledger rows with category icons; and switch `"View as <Member>"` to see per-expense `lent` / `borrowed` status.
 - [x] **Permanent Immutable Activity Log:** Every member addition/removal, expense create/delete, settlement record/undo, group creation, and group reset is logged permanently in `expense_splitter_activity_v1` with search & type filters and zero delete/clear actions.
 - [x] **Responsive Desktop & Mobile Layout:** Responsive multi-view layout verified cleanly across desktop (`1280×800`), mobile (`375×812`), and narrow (`320×568`) viewports with zero horizontal overflow.
+- [x] **Live Deployment:** Hosted cleanly on Vercel with zero build step at [https://easy-one-coral.vercel.app](https://easy-one-coral.vercel.app).
 
 ## Architecture Overview
 
