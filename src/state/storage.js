@@ -59,7 +59,15 @@ function resolveStorage(storageBackend) {
   }
 }
 
-function validateAndSanitizeState(candidate) {
+const MAX_GROUPS = 50;
+
+/**
+ * Validates and sanitizes an AppState payload, returning null on any structural or invariant error.
+ *
+ * @param {unknown} candidate
+ * @returns {{ version: number, members: Array, expenses: Array, settlements: Array } | null}
+ */
+export function validateAndSanitizeState(candidate) {
   if (!isPlainObject(candidate) || candidate.version !== SCHEMA_VERSION) {
     return null;
   }
@@ -357,6 +365,45 @@ export function clearState(storageBackend) {
   }
 }
 
+/**
+ * Sanitizes a single activity log entry, returning null if malformed.
+ *
+ * @param {unknown} item
+ * @returns {Object | null}
+ */
+export function sanitizeActivityEntry(item) {
+  if (!isPlainObject(item) || !isNonEmptyString(item.id)) {
+    return null;
+  }
+  if (!isNonEmptyString(item.type) || !isNonEmptyString(item.summary)) {
+    return null;
+  }
+  if (!isValidTimestamp(item.createdAt)) {
+    return null;
+  }
+  if (item.amountPaise !== undefined && item.amountPaise !== null) {
+    if (!Number.isSafeInteger(item.amountPaise) || item.amountPaise < 0 || item.amountPaise > MAX_AMOUNT_PAISE) {
+      return null;
+    }
+  }
+  const category =
+    item.category === undefined || item.category === null
+      ? 'other'
+      : VALID_CATEGORIES.has(item.category)
+        ? item.category
+        : 'other';
+
+  return {
+    id: item.id.trim().slice(0, 80),
+    type: item.type.trim().slice(0, 40),
+    summary: item.summary.trim().slice(0, 200),
+    detail: typeof item.detail === 'string' ? item.detail.trim().slice(0, 300) : '',
+    category,
+    amountPaise: item.amountPaise ?? null,
+    createdAt: item.createdAt,
+  };
+}
+
 function validateActivityEntries(candidate) {
   if (!Array.isArray(candidate)) {
     return null;
@@ -365,37 +412,12 @@ function validateActivityEntries(candidate) {
   const seenIds = new Set();
 
   for (const item of candidate) {
-    if (!isPlainObject(item) || !isNonEmptyString(item.id) || seenIds.has(item.id)) {
+    const cleanEntry = sanitizeActivityEntry(item);
+    if (!cleanEntry || seenIds.has(cleanEntry.id)) {
       return null;
     }
-    if (!isNonEmptyString(item.type) || !isNonEmptyString(item.summary)) {
-      return null;
-    }
-    if (!isValidTimestamp(item.createdAt)) {
-      return null;
-    }
-    if (item.amountPaise !== undefined && item.amountPaise !== null) {
-      if (!Number.isSafeInteger(item.amountPaise) || item.amountPaise < 0) {
-        return null;
-      }
-    }
-    const category =
-      item.category === undefined || item.category === null
-        ? 'other'
-        : VALID_CATEGORIES.has(item.category)
-          ? item.category
-          : 'other';
-
-    seenIds.add(item.id);
-    clean.push({
-      id: item.id,
-      type: item.type.trim(),
-      summary: item.summary.trim(),
-      detail: typeof item.detail === 'string' ? item.detail.trim() : '',
-      category,
-      amountPaise: item.amountPaise ?? null,
-      createdAt: item.createdAt,
-    });
+    seenIds.add(cleanEntry.id);
+    clean.push(cleanEntry);
   }
 
   return clean;
@@ -482,7 +504,96 @@ export function saveActivity(activityEntries, storageBackend) {
 }
 
 /**
+ * Validates and sanitizes multi-group metadata, returning null if invalid or empty.
+ *
+ * @param {unknown} candidate
+ * @returns {{ activeGroupId: string, groups: Array<{ id: string, name: string, state: object, createdAt: number }> } | null}
+ */
+export function sanitizeGroupsMeta(candidate) {
+  if (!isPlainObject(candidate) || !Array.isArray(candidate.groups) || !isNonEmptyString(candidate.activeGroupId)) {
+    return null;
+  }
+
+  const cleanGroups = [];
+  const seenIds = new Set();
+  for (const rawGroup of candidate.groups.slice(0, MAX_GROUPS)) {
+    if (!isPlainObject(rawGroup) || !isNonEmptyString(rawGroup.id)) {
+      continue;
+    }
+    const cleanId = rawGroup.id.trim().slice(0, 80);
+    if (!cleanId || seenIds.has(cleanId)) {
+      continue;
+    }
+    const cleanName = normalizeMemberName(rawGroup.name).slice(0, MAX_MEMBER_NAME_LENGTH);
+    if (!cleanName || !isValidTimestamp(rawGroup.createdAt)) {
+      continue;
+    }
+    const validState = validateAndSanitizeState(rawGroup.state);
+    if (!validState) {
+      continue;
+    }
+    seenIds.add(cleanId);
+    cleanGroups.push({
+      id: cleanId,
+      name: cleanName,
+      state: validState,
+      createdAt: rawGroup.createdAt,
+    });
+  }
+
+  if (cleanGroups.length === 0) {
+    return null;
+  }
+
+  const cleanActiveId = candidate.activeGroupId.trim();
+  const activeExists = cleanGroups.some((g) => g.id === cleanActiveId);
+  return {
+    activeGroupId: activeExists ? cleanActiveId : cleanGroups[0].id,
+    groups: cleanGroups,
+  };
+}
+
+/**
+ * Removes multi-group metadata from storage cleanly.
+ *
+ * @param {Storage} [storageBackend]
+ */
+export function clearGroupsMeta(storageBackend) {
+  const backend = resolveStorage(storageBackend);
+  if (!backend) {
+    return;
+  }
+  try {
+    backend.removeItem(GROUPS_STORAGE_KEY);
+  } catch {
+    // Ignore restricted storage errors cleanly.
+  }
+}
+
+/**
+ * Clears all local workspace keys (used on explicit sign-out for shared-device hygiene).
+ *
+ * @param {Storage} [storageBackend]
+ * @returns {{ ok: boolean, error: string | null }}
+ */
+export function clearAllWorkspaceStorage(storageBackend) {
+  const backend = resolveStorage(storageBackend);
+  if (!backend) {
+    return { ok: false, error: STORAGE_UNAVAILABLE_WARNING };
+  }
+  try {
+    backend.removeItem(STORAGE_KEY);
+    backend.removeItem(GROUPS_STORAGE_KEY);
+    backend.removeItem(ACTIVITY_STORAGE_KEY);
+    return { ok: true, error: null };
+  } catch {
+    return { ok: false, error: STORAGE_UNAVAILABLE_WARNING };
+  }
+}
+
+/**
  * Loads saved multi-group workspace metadata safely without throwing.
+ * Purges corrupted metadata from storage so malformed payloads do not linger.
  *
  * @param {Storage} [storageBackend]
  * @returns {{ activeGroupId: string, groups: Array<{ id: string, name: string, state: object, createdAt: number }> } | null}
@@ -506,48 +617,20 @@ export function loadGroupsMeta(storageBackend) {
 
   try {
     const parsed = JSON.parse(raw);
-    if (!isPlainObject(parsed) || !Array.isArray(parsed.groups) || !isNonEmptyString(parsed.activeGroupId)) {
+    const sanitized = sanitizeGroupsMeta(parsed);
+    if (!sanitized) {
+      clearGroupsMeta(backend);
       return null;
     }
-
-    const cleanGroups = [];
-    const seenIds = new Set();
-    for (const rawGroup of parsed.groups) {
-      if (!isPlainObject(rawGroup) || !isNonEmptyString(rawGroup.id) || seenIds.has(rawGroup.id)) {
-        continue;
-      }
-      if (!isNonEmptyString(rawGroup.name) || !isValidTimestamp(rawGroup.createdAt)) {
-        continue;
-      }
-      const validState = validateAndSanitizeState(rawGroup.state);
-      if (!validState) {
-        continue;
-      }
-      seenIds.add(rawGroup.id);
-      cleanGroups.push({
-        id: rawGroup.id.trim(),
-        name: rawGroup.name.trim().slice(0, 40),
-        state: validState,
-        createdAt: rawGroup.createdAt,
-      });
-    }
-
-    if (cleanGroups.length === 0) {
-      return null;
-    }
-
-    const activeExists = cleanGroups.some((g) => g.id === parsed.activeGroupId);
-    return {
-      activeGroupId: activeExists ? parsed.activeGroupId : cleanGroups[0].id,
-      groups: cleanGroups,
-    };
+    return sanitized;
   } catch {
+    clearGroupsMeta(backend);
     return null;
   }
 }
 
 /**
- * Persists multi-group metadata cleanly without blocking single-group storage.
+ * Persists validated multi-group metadata cleanly without blocking single-group storage.
  *
  * @param {{ activeGroupId: string, groups: Array }} meta
  * @param {Storage} [storageBackend]
@@ -558,8 +641,12 @@ export function saveGroupsMeta(meta, storageBackend) {
   if (!backend) {
     return { ok: false, error: STORAGE_UNAVAILABLE_WARNING };
   }
+  const sanitized = sanitizeGroupsMeta(meta);
+  if (!sanitized) {
+    return { ok: false, error: 'Refused to persist invalid groups metadata.' };
+  }
   try {
-    backend.setItem(GROUPS_STORAGE_KEY, JSON.stringify(meta));
+    backend.setItem(GROUPS_STORAGE_KEY, JSON.stringify(sanitized));
     return { ok: true, error: null };
   } catch (err) {
     const isQuota = err?.name === 'QuotaExceededError';

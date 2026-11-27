@@ -412,6 +412,12 @@ export function createCloudSync({
       }
       const { auth, authMod } = await getSdk();
       await authMod.signOut(auth);
+      currentUser = null;
+      syncedActivityIds.clear();
+      store.clearLocalWorkspace?.();
+      syncState = 'local';
+      syncMessage = 'Saved locally in this browser';
+      emitStatus();
       return { ok: true, error: null };
     } catch (err) {
       return { ok: false, error: formatAuthError(err) };

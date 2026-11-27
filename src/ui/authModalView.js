@@ -222,13 +222,18 @@ export function mountAuthModalView({ dialog, closeBtn, bodyEl, triggerBtns, clou
         setInlineError(errorEl, 'Enter your email address above first to receive a reset link.');
         return;
       }
-      const res = await cloudSync.sendPasswordReset(emailVal);
-      if (!res.ok) {
-        setInlineError(errorEl, res.error);
-        return;
+      resetBtn.disabled = true;
+      try {
+        const res = await cloudSync.sendPasswordReset(emailVal);
+        if (!res.ok) {
+          setInlineError(errorEl, res.error);
+          return;
+        }
+        infoEl.textContent = `Password reset email sent to ${emailVal}.`;
+        infoEl.hidden = false;
+      } finally {
+        resetBtn.disabled = false;
       }
-      infoEl.textContent = `Password reset email sent to ${emailVal}.`;
-      infoEl.hidden = false;
     });
 
     footLinks.append(toggleModeBtn, resetBtn);

@@ -14,11 +14,15 @@ import {
 } from '../core/validators.js';
 import {
   VALID_CATEGORIES,
+  clearAllWorkspaceStorage,
+  clearGroupsMeta,
   clearState,
   createInitialState,
   loadActivity,
   loadGroupsMeta,
   loadState,
+  sanitizeActivityEntry,
+  sanitizeGroupsMeta,
   saveActivity,
   saveGroupsMeta,
   saveState,
@@ -61,6 +65,9 @@ export function createStore(options = {}) {
   const storageBackend = options?.storage;
   const loaded = loadState(storageBackend);
   const loadedActivity = loadActivity(storageBackend);
+  if (loaded.recovered) {
+    clearGroupsMeta(storageBackend);
+  }
   const loadedGroups = !loaded.recovered ? loadGroupsMeta(storageBackend) : null;
 
   let persisted = loaded.state;
@@ -621,6 +628,31 @@ export function createStore(options = {}) {
     return { ok: cleared.ok, error: cleared.error };
   }
 
+  function clearLocalWorkspace() {
+    const cleared = clearAllWorkspaceStorage(storageBackend);
+    persisted = createInitialState();
+    groupsMeta = {
+      activeGroupId: 'grp_default',
+      groups: [
+        {
+          id: 'grp_default',
+          name: DEFAULT_GROUP_NAME,
+          state: persisted,
+          createdAt: Date.now(),
+        },
+      ],
+    };
+    hasCustomizedGroups = false;
+    activityLog = [];
+    activeMemberFilter = 'all';
+    activeCategoryFilter = 'all';
+    viewerMemberId = 'all';
+    searchQuery = '';
+    storageWarning = cleared.ok ? null : cleared.error;
+    notify();
+    return { ok: cleared.ok, error: cleared.error };
+  }
+
   function getCloudPayload() {
     const syncedGroups = groupsMeta.groups.map((g) =>
       g.id === groupsMeta.activeGroupId ? { ...g, state: persisted } : g
@@ -637,36 +669,54 @@ export function createStore(options = {}) {
       return;
     }
 
-    // Merge permanent append-only activity log without dropping local entries
+    // Merge permanent append-only activity log without dropping local entries, validating every remote entry
     const mergedById = new Map();
     for (const entry of activityLog) {
       mergedById.set(entry.id, entry);
     }
     if (Array.isArray(cloudPayload.activityEntries)) {
-      for (const entry of cloudPayload.activityEntries) {
-        if (entry && typeof entry.id === 'string' && !mergedById.has(entry.id)) {
-          mergedById.set(entry.id, entry);
+      for (const rawEntry of cloudPayload.activityEntries) {
+        const cleanEntry = sanitizeActivityEntry(rawEntry);
+        if (cleanEntry && !mergedById.has(cleanEntry.id)) {
+          mergedById.set(cleanEntry.id, cleanEntry);
         }
       }
     }
     activityLog = [...mergedById.values()].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
-    saveActivity(activityLog, storageBackend);
+    if (activityLog.length > 0) {
+      const savedAct = saveActivity(activityLog, storageBackend);
+      if (!savedAct.ok) {
+        storageWarning = savedAct.error;
+      }
+    }
 
     if (Array.isArray(cloudPayload.groups) && cloudPayload.groups.length > 0) {
-      hasCustomizedGroups = cloudPayload.groups.length > 1 || cloudPayload.groups[0].name !== DEFAULT_GROUP_NAME;
-      const targetId = cloudPayload.activeGroupId;
-      const resolvedActive = cloudPayload.groups.some((g) => g.id === targetId)
-        ? targetId
-        : cloudPayload.groups[0].id;
-      groupsMeta = {
-        activeGroupId: resolvedActive,
-        groups: cloneSnapshot(cloudPayload.groups),
-      };
-      const activeRec = groupsMeta.groups.find((g) => g.id === resolvedActive) ?? groupsMeta.groups[0];
+      const sanitizedMeta = sanitizeGroupsMeta({
+        activeGroupId: cloudPayload.activeGroupId || cloudPayload.groups[0]?.id,
+        groups: cloudPayload.groups,
+      });
+      if (!sanitizedMeta) {
+        storageWarning = 'Ignored invalid cloud workspace data to protect local state.';
+        notify();
+        return;
+      }
+      hasCustomizedGroups =
+        sanitizedMeta.groups.length > 1 || sanitizedMeta.groups[0].name !== DEFAULT_GROUP_NAME;
+      groupsMeta = sanitizedMeta;
+      const activeRec =
+        groupsMeta.groups.find((g) => g.id === groupsMeta.activeGroupId) ?? groupsMeta.groups[0];
       persisted = cloneSnapshot(activeRec.state ?? createInitialState());
-      saveState(persisted, storageBackend);
+      const saved = saveState(persisted, storageBackend);
+      if (!saved.ok) {
+        storageWarning = saved.error;
+      }
       if (hasCustomizedGroups) {
-        saveGroupsMeta(groupsMeta, storageBackend);
+        const savedMeta = saveGroupsMeta(groupsMeta, storageBackend);
+        if (!savedMeta.ok) {
+          storageWarning = savedMeta.error;
+        }
+      } else {
+        clearGroupsMeta(storageBackend);
       }
       activeMemberFilter = 'all';
       activeCategoryFilter = 'all';
@@ -696,6 +746,7 @@ export function createStore(options = {}) {
     createGroup,
     switchGroup,
     resetGroup,
+    clearLocalWorkspace,
     getCloudPayload,
     hydrateCloudWorkspace,
   };

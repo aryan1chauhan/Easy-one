@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import {
   ACTIVITY_STORAGE_KEY,
+  GROUPS_STORAGE_KEY,
   SCHEMA_VERSION,
   STORAGE_KEY,
   clearState,
   createInitialState,
   loadActivity,
+  loadGroupsMeta,
   loadState,
   saveActivity,
+  saveGroupsMeta,
   saveState,
 } from '../src/state/storage.js';
 import {
@@ -710,8 +713,123 @@ async function runAsyncCloudSyncTests() {
     redirectCountBefore
   );
 
+  // 6. Malformed remote cloud hydration (negative/float paise, >10 members, bad activity) is rejected/sanitized
+  const cloudStore = createStore({ storage: createMemoryStorage() });
+  const localMember = cloudStore.addMember('LocalUser').member;
+  const localCountBefore = cloudStore.getDerivedState().activityFeed.length;
+  const tooManyMembers = Array.from({ length: 11 }, (_, idx) => ({
+    id: `m_${idx}`,
+    name: `User ${idx}`,
+    createdAt: 100 + idx,
+  }));
+  cloudStore.hydrateCloudWorkspace({
+    activeGroupId: 'grp_bad',
+    groups: [
+      {
+        id: 'grp_bad',
+        name: 'Tampered Float',
+        createdAt: 100,
+        state: {
+          version: SCHEMA_VERSION,
+          members: [
+            { id: 'm1', name: 'Evil', createdAt: 100 },
+            { id: 'm2', name: 'Victim', createdAt: 101 },
+          ],
+          expenses: [
+            {
+              id: 'e1',
+              title: 'Bad',
+              amountPaise: -999,
+              paidBy: 'm1',
+              splitType: 'equal',
+              shares: [
+                { memberId: 'm1', sharePaise: -500 },
+                { memberId: 'm2', sharePaise: -499 },
+              ],
+              createdAt: 200,
+            },
+          ],
+          settlements: [],
+        },
+      },
+      {
+        id: 'grp_overflow',
+        name: 'Too Many Members',
+        createdAt: 101,
+        state: {
+          version: SCHEMA_VERSION,
+          members: tooManyMembers,
+          expenses: [],
+          settlements: [],
+        },
+      },
+    ],
+    activityEntries: [
+      { id: 'bad_neg', type: 'expense_added', summary: 'Neg', amountPaise: -10, createdAt: 10 },
+      { id: 'bad_missing_summary', type: 'expense_added', createdAt: 11 },
+      { id: 'good_act', type: 'group_created', summary: 'Valid cloud act', createdAt: 12 },
+    ],
+  });
+  assert.equal(cloudStore.getState().members.length, 1);
+  assert.equal(cloudStore.getState().members[0].id, localMember.id);
+  assert.match(cloudStore.getState().storageWarning ?? '', /invalid cloud workspace/i);
+  assert.equal(cloudStore.getDerivedState().activityFeed.length, localCountBefore + 1);
+  assert.equal(cloudStore.getDerivedState().activityFeed.some((e) => e.id === 'bad_neg'), false);
+  assert.equal(cloudStore.getDerivedState().activityFeed.some((e) => e.id === 'good_act'), true);
+
+  // 7. Corrupted GROUPS_STORAGE_KEY is purged cleanly on recovery and rejected by saveGroupsMeta
+  const corruptGroupsStorage = createMemoryStorage({
+    [STORAGE_KEY]: '{broken',
+    [GROUPS_STORAGE_KEY]: '{"activeGroupId":"g1","groups":[{"id":"g1","name":"Tampered"}]}',
+  });
+  const recoveredStore = createStore({ storage: corruptGroupsStorage });
+  assert.equal(corruptGroupsStorage.getItem(GROUPS_STORAGE_KEY), null);
+  assert.equal(recoveredStore.getState().members.length, 0);
+  assert.equal(saveGroupsMeta({ activeGroupId: 'g1', groups: [] }, corruptGroupsStorage).ok, false);
+  assert.equal(loadGroupsMeta(corruptGroupsStorage), null);
+
+  // 8. Explicit signOutUser clears all synced local workspace keys for shared-device hygiene
+  const signOutStorage = createMemoryStorage();
+  const signOutStore = createStore({ storage: signOutStorage });
+  const rA = signOutStore.addMember('Alice').member;
+  const rB = signOutStore.addMember('Bob').member;
+  signOutStore.addExpense({
+    title: 'Lunch',
+    amount: '200',
+    paidBy: rA.id,
+    splitType: 'equal',
+    splitAmong: [rA.id, rB.id],
+  });
+  signOutStore.createGroup('Office');
+  assert.ok(signOutStorage.getItem(STORAGE_KEY));
+  assert.ok(signOutStorage.getItem(GROUPS_STORAGE_KEY));
+  assert.ok(signOutStorage.getItem(ACTIVITY_STORAGE_KEY));
+
+  const signOutSync = createCloudSync({
+    store: signOutStore,
+    onStatusChange() {},
+    sdkLoader: async () => ({
+      ...mockSdk,
+      authMod: {
+        ...mockSdk.authMod,
+        signOut() {
+          events.push(['signOut']);
+          return Promise.resolve();
+        },
+      },
+    }),
+  });
+  const signOutRes = await signOutSync.signOutUser();
+  assert.equal(signOutRes.ok, true);
+  assert.equal(signOutStorage.getItem(STORAGE_KEY), null);
+  assert.equal(signOutStorage.getItem(GROUPS_STORAGE_KEY), null);
+  assert.equal(signOutStorage.getItem(ACTIVITY_STORAGE_KEY), null);
+  assert.equal(signOutStore.getState().members.length, 0);
+  assert.equal(signOutStore.getState().expenses.length, 0);
+  assert.equal(signOutStore.getDerivedState().activityFeed.length, 0);
+
   passed += 1;
-  console.log('PASS: Cloud Sync: synchronous Google popup, cold-click guard, and same-origin redirect fallback');
+  console.log('PASS: Cloud Sync: Google popup/redirect, malformed cloud rejection, group purge & sign-out wipe');
 }
 
 await runAsyncCloudSyncTests();
