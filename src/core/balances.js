@@ -139,3 +139,42 @@ export function calculateBalances(members, expenses = [], settlements = []) {
     netSumPaise,
   };
 }
+
+/**
+ * Summarizes group expenses by category using exact integer paise math.
+ *
+ * @param {Array<{ amountPaise: number, category?: string }>} [expenses]
+ * @returns {{
+ *   totalPaise: number,
+ *   categories: Array<{ category: string, amountPaise: number, count: number, percent: number }>
+ * }}
+ */
+export function summarizeCategories(expenses = []) {
+  const expenseList = asArray(expenses);
+  const totals = new Map();
+  let totalPaise = 0;
+
+  for (const exp of expenseList) {
+    if (!exp || !Number.isSafeInteger(exp.amountPaise) || exp.amountPaise <= 0) {
+      continue;
+    }
+    const category = typeof exp.category === 'string' && exp.category.trim() ? exp.category.trim() : 'other';
+    const current = totals.get(category) ?? { category, amountPaise: 0, count: 0 };
+    current.amountPaise += exp.amountPaise;
+    current.count += 1;
+    totals.set(category, current);
+    totalPaise += exp.amountPaise;
+  }
+
+  const categories = [...totals.values()]
+    .map((entry) => ({
+      ...entry,
+      percent: totalPaise > 0 ? Math.round((entry.amountPaise / totalPaise) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => (b.amountPaise - a.amountPaise) || a.category.localeCompare(b.category));
+
+  return {
+    totalPaise,
+    categories,
+  };
+}

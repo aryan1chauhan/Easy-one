@@ -7,11 +7,14 @@ import { MAX_AMOUNT_PAISE, TOTAL_BPS, parsePercentToBps } from '../core/money.js
 import { MAX_MEMBER_NAME_LENGTH, MAX_MEMBERS, normalizeMemberName } from '../core/validators.js';
 
 export const STORAGE_KEY = 'expense_splitter_state_v1';
+export const ACTIVITY_STORAGE_KEY = 'expense_splitter_activity_v1';
+export const GROUPS_STORAGE_KEY = 'expense_splitter_groups_v1';
 export const SCHEMA_VERSION = 1;
 
 const STORAGE_UNAVAILABLE_WARNING = 'Storage unavailable; changes will not persist after refresh.';
 const CORRUPTED_STATE_WARNING = 'Saved data was corrupted or invalid and has been reset to a clean state.';
 const VALID_SPLIT_TYPES = new Set(['equal', 'exact', 'percentage']);
+export const VALID_CATEGORIES = new Set(['food', 'cab', 'groceries', 'utilities', 'shopping', 'other']);
 
 /**
  * Returns a clean empty AppState matching schema v1.
@@ -172,6 +175,16 @@ function validateAndSanitizeState(candidate) {
       return null;
     }
 
+    const category =
+      rawExpense.category === undefined
+        ? 'other'
+        : VALID_CATEGORIES.has(rawExpense.category)
+          ? rawExpense.category
+          : null;
+    if (!category) {
+      return null;
+    }
+
     expenseIds.add(rawExpense.id);
     expenses.push({
       id: rawExpense.id,
@@ -179,6 +192,7 @@ function validateAndSanitizeState(candidate) {
       amountPaise: rawExpense.amountPaise,
       paidBy: rawExpense.paidBy,
       splitType: rawExpense.splitType,
+      category,
       shares,
       createdAt: rawExpense.createdAt,
     });
@@ -324,6 +338,7 @@ export function saveState(state, storageBackend) {
 
 /**
  * Removes persisted group state from storage cleanly.
+ * Note: Intentionally never deletes ACTIVITY_STORAGE_KEY so audit history stays permanent.
  *
  * @param {Storage} [storageBackend]
  * @returns {{ ok: boolean, error: string | null }}
@@ -339,5 +354,220 @@ export function clearState(storageBackend) {
     return { ok: true, error: null };
   } catch {
     return { ok: false, error: STORAGE_UNAVAILABLE_WARNING };
+  }
+}
+
+function validateActivityEntries(candidate) {
+  if (!Array.isArray(candidate)) {
+    return null;
+  }
+  const clean = [];
+  const seenIds = new Set();
+
+  for (const item of candidate) {
+    if (!isPlainObject(item) || !isNonEmptyString(item.id) || seenIds.has(item.id)) {
+      return null;
+    }
+    if (!isNonEmptyString(item.type) || !isNonEmptyString(item.summary)) {
+      return null;
+    }
+    if (!isValidTimestamp(item.createdAt)) {
+      return null;
+    }
+    if (item.amountPaise !== undefined && item.amountPaise !== null) {
+      if (!Number.isSafeInteger(item.amountPaise) || item.amountPaise < 0) {
+        return null;
+      }
+    }
+    const category =
+      item.category === undefined || item.category === null
+        ? 'other'
+        : VALID_CATEGORIES.has(item.category)
+          ? item.category
+          : 'other';
+
+    seenIds.add(item.id);
+    clean.push({
+      id: item.id,
+      type: item.type.trim(),
+      summary: item.summary.trim(),
+      detail: typeof item.detail === 'string' ? item.detail.trim() : '',
+      category,
+      amountPaise: item.amountPaise ?? null,
+      createdAt: item.createdAt,
+    });
+  }
+
+  return clean;
+}
+
+/**
+ * Loads the permanent append-only activity log without throwing.
+ *
+ * @param {Storage} [storageBackend]
+ * @returns {{ activity: Array, warning: string | null }}
+ */
+export function loadActivity(storageBackend) {
+  const backend = resolveStorage(storageBackend);
+  if (!backend) {
+    return { activity: [], warning: STORAGE_UNAVAILABLE_WARNING };
+  }
+
+  let raw;
+  try {
+    raw = backend.getItem(ACTIVITY_STORAGE_KEY);
+  } catch {
+    return { activity: [], warning: STORAGE_UNAVAILABLE_WARNING };
+  }
+
+  if (raw === null || raw === undefined) {
+    return { activity: [], warning: null };
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    const validated = validateActivityEntries(parsed);
+    if (!validated) {
+      return { activity: [], warning: CORRUPTED_STATE_WARNING };
+    }
+    return { activity: validated, warning: null };
+  } catch {
+    return { activity: [], warning: CORRUPTED_STATE_WARNING };
+  }
+}
+
+/**
+ * Saves the permanent append-only activity log safely.
+ * Refuses to shrink an already-stored valid activity log so history cannot be erased.
+ *
+ * @param {Array} activityEntries
+ * @param {Storage} [storageBackend]
+ * @returns {{ ok: boolean, error: string | null }}
+ */
+export function saveActivity(activityEntries, storageBackend) {
+  const backend = resolveStorage(storageBackend);
+  if (!backend) {
+    return { ok: false, error: STORAGE_UNAVAILABLE_WARNING };
+  }
+
+  const sanitized = validateActivityEntries(activityEntries);
+  if (!sanitized) {
+    return { ok: false, error: 'Refused to persist invalid activity log.' };
+  }
+
+  try {
+    const existingRaw = backend.getItem(ACTIVITY_STORAGE_KEY);
+    if (existingRaw) {
+      try {
+        const existingParsed = validateActivityEntries(JSON.parse(existingRaw));
+        if (existingParsed && sanitized.length < existingParsed.length) {
+          return { ok: false, error: 'Activity history is append-only and cannot be deleted.' };
+        }
+      } catch {
+        // Corrupted existing log can be safely replaced cleanly.
+      }
+    }
+
+    backend.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(sanitized));
+    return { ok: true, error: null };
+  } catch (err) {
+    const isQuota = err?.name === 'QuotaExceededError';
+    return {
+      ok: false,
+      error: isQuota
+        ? 'Storage quota exceeded; changes will not persist after refresh.'
+        : STORAGE_UNAVAILABLE_WARNING,
+    };
+  }
+}
+
+/**
+ * Loads saved multi-group workspace metadata safely without throwing.
+ *
+ * @param {Storage} [storageBackend]
+ * @returns {{ activeGroupId: string, groups: Array<{ id: string, name: string, state: object, createdAt: number }> } | null}
+ */
+export function loadGroupsMeta(storageBackend) {
+  const backend = resolveStorage(storageBackend);
+  if (!backend) {
+    return null;
+  }
+
+  let raw;
+  try {
+    raw = backend.getItem(GROUPS_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!isPlainObject(parsed) || !Array.isArray(parsed.groups) || !isNonEmptyString(parsed.activeGroupId)) {
+      return null;
+    }
+
+    const cleanGroups = [];
+    const seenIds = new Set();
+    for (const rawGroup of parsed.groups) {
+      if (!isPlainObject(rawGroup) || !isNonEmptyString(rawGroup.id) || seenIds.has(rawGroup.id)) {
+        continue;
+      }
+      if (!isNonEmptyString(rawGroup.name) || !isValidTimestamp(rawGroup.createdAt)) {
+        continue;
+      }
+      const validState = validateAndSanitizeState(rawGroup.state);
+      if (!validState) {
+        continue;
+      }
+      seenIds.add(rawGroup.id);
+      cleanGroups.push({
+        id: rawGroup.id.trim(),
+        name: rawGroup.name.trim().slice(0, 40),
+        state: validState,
+        createdAt: rawGroup.createdAt,
+      });
+    }
+
+    if (cleanGroups.length === 0) {
+      return null;
+    }
+
+    const activeExists = cleanGroups.some((g) => g.id === parsed.activeGroupId);
+    return {
+      activeGroupId: activeExists ? parsed.activeGroupId : cleanGroups[0].id,
+      groups: cleanGroups,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persists multi-group metadata cleanly without blocking single-group storage.
+ *
+ * @param {{ activeGroupId: string, groups: Array }} meta
+ * @param {Storage} [storageBackend]
+ * @returns {{ ok: boolean, error: string | null }}
+ */
+export function saveGroupsMeta(meta, storageBackend) {
+  const backend = resolveStorage(storageBackend);
+  if (!backend) {
+    return { ok: false, error: STORAGE_UNAVAILABLE_WARNING };
+  }
+  try {
+    backend.setItem(GROUPS_STORAGE_KEY, JSON.stringify(meta));
+    return { ok: true, error: null };
+  } catch (err) {
+    const isQuota = err?.name === 'QuotaExceededError';
+    return {
+      ok: false,
+      error: isQuota
+        ? 'Storage quota exceeded; changes will not persist after refresh.'
+        : STORAGE_UNAVAILABLE_WARNING,
+    };
   }
 }

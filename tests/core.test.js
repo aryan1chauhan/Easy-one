@@ -17,7 +17,7 @@ import {
   validateExpenseInput,
   validateRemoveMember,
 } from '../src/core/validators.js';
-import { calculateBalances } from '../src/core/balances.js';
+import { calculateBalances, summarizeCategories } from '../src/core/balances.js';
 import { computeMinimumSettlements, verifySettlements } from '../src/core/settleUp.js';
 
 let passed = 0;
@@ -938,6 +938,20 @@ test('T-01, T-02, T-03 & Invariants: settlements update balances cleanly and del
   assert.equal(verifySettlements([null], []), false);
   assert.equal(verifySettlements([{ memberId: 'm1', netPaise: 100 }, { memberId: 'm2', netPaise: -100 }], [{ fromId: 'm2', toId: 'm2', amountPaise: 100 }]), false);
   assert.equal(verifySettlements([{ memberId: 'm1', netPaise: 100 }, { memberId: 'm2', netPaise: -100 }], []), false);
+});
+
+test('summarizeCategories: aggregates exact paise and percentages by category', () => {
+  const res = summarizeCategories([
+    { amountPaise: 60000, category: 'food' },
+    { amountPaise: 30000, category: 'cab' },
+    { amountPaise: 10000, category: 'food' },
+    { amountPaise: -50, category: 'other' },
+  ]);
+  assert.equal(res.totalPaise, 100000);
+  assert.deepEqual(res.categories, [
+    { category: 'food', amountPaise: 70000, count: 2, percent: 70 },
+    { category: 'cab', amountPaise: 30000, count: 1, percent: 30 },
+  ]);
 });
 
 console.log(`\nPhase 1 & Phase 2 core tests complete: ${passed} passed, 0 failed.`);

@@ -3,80 +3,266 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Expense Splitter</title>
+  <title>RupeeSync · Expense Splitter</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="./styles/main.css">
 </head>
 <body>
-  <header class="app-header">
-    <div class="header-inner">
-      <div class="brand-group">
-        <h1 class="app-title">Expense Splitter</h1>
-        <span id="member-count-badge" class="badge badge-neutral">0 / 10 members</span>
-      </div>
-      <button id="reset-group-btn" type="button" class="btn btn-danger-outline">
-        Reset group
-      </button>
-    </div>
-  </header>
+  <div class="workspace-frame">
+    <!-- Desktop Workspace Sidebar Rail (>= 1024px) -->
+    <aside class="sidebar-rail" aria-label="Workspace navigation">
+      <div class="sidebar-top">
+        <a href="#overview" class="brand-link" data-nav="overview">
+          <span class="brand-mark" aria-hidden="true">₹</span>
+          <span class="brand-copy">
+            <span class="brand-title">RupeeSync</span>
+            <span id="sidebar-group-name" class="brand-subtitle">Shared Group · 0 / 10</span>
+          </span>
+        </a>
 
-  <div id="storage-banner" class="storage-banner" role="status" aria-live="polite" hidden>
-    <span id="storage-banner-text"></span>
-    <button id="storage-banner-dismiss" type="button" class="btn-icon" aria-label="Dismiss storage notice">
-      ×
-    </button>
+        <button id="sidebar-add-expense-btn" type="button" class="btn btn-primary sidebar-cta">
+          + Add Expense
+        </button>
+
+        <nav class="sidebar-nav" aria-label="Sidebar sections">
+          <button type="button" class="sidebar-nav-btn is-active" data-nav="overview" aria-current="page">
+            <span class="sidebar-nav-icon" data-icon="home"></span>
+            <span class="sidebar-nav-label">Overview</span>
+          </button>
+          <button type="button" class="sidebar-nav-btn" data-nav="friends">
+            <span class="sidebar-nav-icon" data-icon="friends"></span>
+            <span class="sidebar-nav-label">Friends &amp; Settle</span>
+            <span id="nav-friends-badge" class="sidebar-pill">0</span>
+          </button>
+          <button type="button" class="sidebar-nav-btn" data-nav="analytics">
+            <span class="sidebar-nav-icon" data-icon="charts"></span>
+            <span class="sidebar-nav-label">Charts</span>
+          </button>
+          <button type="button" class="sidebar-nav-btn" data-nav="activity">
+            <span class="sidebar-nav-icon" data-icon="activity"></span>
+            <span class="sidebar-nav-label">Activity</span>
+            <span id="nav-activity-badge" class="sidebar-pill">0</span>
+          </button>
+          <button type="button" class="sidebar-nav-btn" data-nav="group">
+            <span class="sidebar-nav-icon" data-icon="group"></span>
+            <span class="sidebar-nav-label">Groups</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="sidebar-summary-box">
+          <div class="sidebar-stat-row">
+            <span>Total spend</span>
+            <strong id="sidebar-spend-val">₹0</strong>
+          </div>
+          <div class="sidebar-stat-row">
+            <span>Pending settle</span>
+            <strong id="sidebar-pending-val">₹0</strong>
+          </div>
+        </div>
+        <button id="sidebar-reset-btn" type="button" class="btn btn-danger-outline btn-sm sidebar-reset-btn">
+          Reset group
+        </button>
+      </div>
+    </aside>
+
+    <div class="workspace-main">
+      <!-- Tablet / Mobile Header (< 1024px) -->
+      <header class="app-header">
+        <div class="header-inner">
+          <div class="brand-group">
+            <a href="#overview" class="brand-link" data-nav="overview">
+              <span class="brand-mark" aria-hidden="true">₹</span>
+              <span class="brand-copy">
+                <h1 class="app-title">RupeeSync</h1>
+                <span id="header-group-subtitle" class="brand-subtitle">Shared Group · 0 / 10</span>
+              </span>
+            </a>
+          </div>
+
+          <nav class="top-nav" aria-label="Primary navigation">
+            <button type="button" class="nav-tab is-active" data-nav="overview" aria-current="page">
+              <span>Overview</span>
+            </button>
+            <button type="button" class="nav-tab" data-nav="friends">
+              <span>Friends &amp; Settle</span>
+            </button>
+            <button type="button" class="nav-tab" data-nav="analytics">
+              <span>Charts</span>
+            </button>
+            <button type="button" class="nav-tab" data-nav="activity">
+              <span>Activity</span>
+            </button>
+            <button type="button" class="nav-tab" data-nav="group">
+              <span>Groups</span>
+            </button>
+          </nav>
+
+          <div class="header-actions">
+            <button id="open-add-expense-btn" type="button" class="btn btn-primary btn-sm">
+              + Add Expense
+            </button>
+            <button id="reset-group-btn" type="button" class="btn btn-danger-outline btn-sm">
+              Reset
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div id="storage-banner" class="storage-banner" role="status" aria-live="polite" hidden>
+        <span id="storage-banner-text"></span>
+        <button id="storage-banner-dismiss" type="button" class="btn-icon" aria-label="Dismiss storage notice">
+          ×
+        </button>
+      </div>
+
+      <main class="app-shell">
+        <!-- View 1: Home / Active Group Workspace -->
+        <div id="view-overview" class="view-panel" role="tabpanel">
+          <div class="overview-workspace">
+            <div class="overview-main">
+              <div id="overview-hero-root"></div>
+
+              <section id="expense-list-section" class="card" aria-labelledby="expense-list-heading">
+                <div class="card-header expense-list-header">
+                  <h2 id="expense-list-heading" class="card-title">Expenses Ledger</h2>
+                  <div id="expense-filter-slot"></div>
+                </div>
+                <div id="expense-toolbar-slot"></div>
+                <div id="expense-list-root"></div>
+              </section>
+            </div>
+
+            <aside class="overview-aside" aria-label="Group snapshot">
+              <div id="overview-settle-root"></div>
+              <div id="overview-activity-root"></div>
+            </aside>
+          </div>
+        </div>
+
+        <!-- View 2: Friends, Balances & Minimum-Transaction Settle Up -->
+        <div id="view-friends" class="view-panel" role="tabpanel" hidden>
+          <div class="friends-grid">
+            <section id="friends-section" class="card" aria-labelledby="friends-heading">
+              <div class="card-header">
+                <h2 id="friends-heading" class="card-title">Friends &amp; Breakdown</h2>
+                <span id="friends-summary-badge" class="badge badge-neutral">All settled</span>
+              </div>
+              <div id="friends-root"></div>
+            </section>
+
+            <section id="settle-up-section" class="card" aria-labelledby="settle-up-heading">
+              <div class="card-header">
+                <h2 id="settle-up-heading" class="card-title">Settle Up (Optimal)</h2>
+                <span id="settle-count-badge" class="badge badge-neutral">0 payments</span>
+              </div>
+              <div id="settle-up-root"></div>
+            </section>
+
+            <section id="balances-section" class="card balances-full-card" aria-labelledby="balances-heading">
+              <div class="card-header">
+                <h2 id="balances-heading" class="card-title">Full Balances Ledger</h2>
+                <span id="balances-total-badge" class="badge badge-neutral">Total: ₹0</span>
+              </div>
+              <div id="balances-root"></div>
+            </section>
+          </div>
+        </div>
+
+        <!-- View 3: RupeeSync Budget Analytics & Charts -->
+        <div id="view-analytics" class="view-panel" role="tabpanel" hidden>
+          <div id="analytics-root" class="analytics-bento-grid"></div>
+        </div>
+
+        <!-- View 4: Permanent Immutable Recent Activity Audit Log -->
+        <div id="view-activity" class="view-panel" role="tabpanel" hidden>
+          <section id="activity-section" class="card" aria-labelledby="activity-heading">
+            <div class="card-header">
+              <h2 id="activity-heading" class="card-title">Recent Activity</h2>
+              <span id="activity-lock-badge" class="badge badge-lock">Permanent</span>
+            </div>
+            <div id="activity-root"></div>
+          </section>
+        </div>
+
+        <!-- View 5: Groups Switcher, Members (2-10), & Settings -->
+        <div id="view-group" class="view-panel" role="tabpanel" hidden>
+          <div class="group-page-grid">
+            <section id="groups-section" class="card" aria-labelledby="groups-heading">
+              <div class="card-header">
+                <h2 id="groups-heading" class="card-title">My Groups</h2>
+                <span class="helper-meta">Switch or start a new group</span>
+              </div>
+              <div id="groups-root"></div>
+            </section>
+
+            <section id="members-section" class="card" aria-labelledby="members-heading">
+              <div class="card-header">
+                <h2 id="members-heading" class="card-title">Group Members</h2>
+                <span id="member-count-badge" class="badge badge-neutral">0 / 10 members</span>
+              </div>
+              <div id="members-root"></div>
+            </section>
+
+            <section id="settings-section" class="card" aria-labelledby="settings-heading">
+              <div class="card-header">
+                <h2 id="settings-heading" class="card-title">Group Settings &amp; Profile</h2>
+              </div>
+              <div id="settings-root"></div>
+            </section>
+          </div>
+        </div>
+      </main>
+
+      <footer class="workspace-footer" aria-label="Workspace details">
+        <span>RupeeSync · Exact Integer Paise Engine · Bitmask DP Optimal Settlements</span>
+        <span>Audit History: Append-Only (Permanent)</span>
+      </footer>
+    </div>
   </div>
 
-  <main class="dashboard">
-    <div class="col-left">
-      <section id="members-section" class="card" aria-labelledby="members-heading">
-        <div class="card-header">
-          <h2 id="members-heading" class="card-title">Group Members</h2>
-          <span class="helper-meta">2 to 10 people</span>
-        </div>
-        <div id="members-root"></div>
-      </section>
+  <!-- Mobile Floating Bottom Navigation Dock (< 768px) -->
+  <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
+    <button type="button" class="mobile-nav-btn is-active" data-nav="overview">
+      <span class="mobile-nav-icon" data-icon="home"></span>
+      <span>Home</span>
+    </button>
+    <button type="button" class="mobile-nav-btn" data-nav="friends">
+      <span class="mobile-nav-icon" data-icon="friends"></span>
+      <span>Friends</span>
+    </button>
+    <button id="mobile-add-expense-btn" type="button" class="mobile-fab-btn" aria-label="Add expense">
+      <span class="mobile-nav-icon" data-icon="plus"></span>
+    </button>
+    <button type="button" class="mobile-nav-btn" data-nav="analytics">
+      <span class="mobile-nav-icon" data-icon="charts"></span>
+      <span>Charts</span>
+    </button>
+    <button type="button" class="mobile-nav-btn" data-nav="activity">
+      <span class="mobile-nav-icon" data-icon="activity"></span>
+      <span>Activity</span>
+    </button>
+  </nav>
 
-      <section id="expense-form-section" class="card" aria-labelledby="expense-form-heading">
-        <div class="card-header">
-          <h2 id="expense-form-heading" class="card-title">Add Expense</h2>
-        </div>
-        <div id="expense-form-root"></div>
-      </section>
+  <!-- Focused Add Expense Modal Sheet -->
+  <dialog id="expense-dialog" class="modal-dialog modal-composer" aria-labelledby="expense-dialog-title">
+    <div class="modal-content">
+      <div class="modal-head">
+        <h2 id="expense-dialog-title" class="modal-title">Add Expense</h2>
+        <button id="expense-dialog-close" type="button" class="btn-icon" aria-label="Close add expense dialog">
+          ×
+        </button>
+      </div>
+      <div id="expense-form-root"></div>
     </div>
-
-    <div class="col-right">
-      <section id="balances-section" class="card" aria-labelledby="balances-heading">
-        <div class="card-header">
-          <h2 id="balances-heading" class="card-title">Balances</h2>
-          <span id="balances-total-badge" class="badge badge-neutral">Total: ₹0</span>
-        </div>
-        <div id="balances-root"></div>
-      </section>
-
-      <section id="settle-up-section" class="card" aria-labelledby="settle-up-heading">
-        <div class="card-header">
-          <h2 id="settle-up-heading" class="card-title">Settle Up</h2>
-          <span id="settle-count-badge" class="badge badge-neutral">0 payments</span>
-        </div>
-        <div id="settle-up-root"></div>
-      </section>
-
-      <section id="expense-list-section" class="card" aria-labelledby="expense-list-heading">
-        <div class="card-header expense-list-header">
-          <h2 id="expense-list-heading" class="card-title">Expense History</h2>
-          <div id="expense-filter-slot"></div>
-        </div>
-        <div id="expense-list-root"></div>
-      </section>
-    </div>
-  </main>
+  </dialog>
 
   <dialog id="reset-dialog" class="modal-dialog" aria-labelledby="reset-dialog-title" aria-describedby="reset-dialog-desc">
     <div class="modal-content">
       <h2 id="reset-dialog-title" class="modal-title">Reset group?</h2>
       <p id="reset-dialog-desc" class="modal-body">
-        This permanently clears all members, expenses, and recorded settlements from this browser.
+        This clears current members, expenses, and recorded settlements from the active group. Your permanent Recent Activity log stays intact.
       </p>
       <div class="modal-actions">
         <button id="reset-cancel-btn" type="button" class="btn btn-secondary">Cancel</button>

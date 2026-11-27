@@ -1,6 +1,6 @@
-# Expense Splitter (`Easy-one`)
+# RupeeSync · Expense Splitter (`Easy-one`)
 
-A zero-dependency, client-side web application for tracking shared group expenses (2–10 members) in Indian Rupees (`₹`), calculating accurate per-member balances, and simplifying settlements to the mathematically minimum number of transactions.
+A zero-dependency, client-side multi-view web application for tracking shared group expenses (2–10 members) in Indian Rupees (`₹`), viewing interactive spending analytics, inspecting per-friend breakdowns and an immutable audit log, and simplifying settlements to the mathematically minimum number of transactions.
 
 ## Tech Stack
 
@@ -27,10 +27,10 @@ For static hosting (GitHub Pages, Vercel, or Netlify), deploy the repository roo
 ## How to Run Automated Tests
 
 ```bash
-# Pure domain unit tests (money precision, validators, balances, Bitmask DP) — 32 assertions
+# Pure domain unit tests (money precision, validators, balances, category analytics, Bitmask DP) — 33 assertions
 node tests/core.test.js
 
-# Reactive store & fault-tolerant localStorage persistence tests — 5 test suites
+# Reactive store, multi-group & fault-tolerant localStorage persistence tests — 7 test suites
 node tests/state.test.js
 ```
 
@@ -49,35 +49,44 @@ node tests/state.test.js
 - **Exact Bitmask DP (`src/core/settleUp.js`):** Rather than greedy-only matching (which fails on subset-sum traps such as `[+700, +600, -600, -400, -300]`, producing 4 payments instead of 3), the solver partitions the $k$ non-zero balances ($k \le 10$) in $O(3^k)$ time into the maximum number $p$ of disjoint zero-sum subsets (`Float64Array` subset sums prevent 32-bit overflow), yielding strictly $k - p$ optimal transfers.
 
 ### Bonus Features
+- [x] **Multi-View Website Experience & RupeeSync Theme:** Sticky top tab navigation (`Overview`, `Friends & Settle`, `Charts`, `Activity`, `Groups`) + floating mobile bottom dock with centered `+` composer trigger, hero group summary card with paid/settled meters, member avatar strip, and focused Add Expense modal (`+₹50`/`+₹100`/`+₹500` presets and visual category tiles).
+- [x] **Interactive Budget Analytics (`Charts`):** Pure SVG Donut Chart (`Spending by Category`), clickable category breakdown cards that filter the ledger, and `Paid vs. Fair Share` comparison bars by member.
+- [x] **Multi-Group Management (`Groups`):** Create new groups (`"Start a new group"`), rename active groups, and switch between isolated group ledgers.
 - [x] **Unequal Splits (`Exact (₹)` & `Percentage (%)`):** Live remaining/excess status bars, integer basis-point ($100\% = 10{,}000\text{ bps}$) validation, and Hamilton's Largest Remainder Method distribution (`E-08`–`E-14`).
-- [x] **Mark as Settled & Undo:** Records completed transfers into `settlements`, recomputes net balances and remaining payments immediately, and lets you undo recorded settlements (`T-01`–`T-03`).
-- [x] **Filter Expenses by Member:** Filters only the Expense History view while keeping Balances and Settle Up global (`U-03`, `U-04`), automatically resetting to `All Members` if the filtered member is removed (`M-12`).
-- [x] **Responsive Desktop & Mobile Layout:** Two-column layout above `960px`, single-column stacked layout on mobile viewports down to `320px` with zero horizontal overflow.
+- [x] **Mark as Settled & Undo + Settled Friends Toggle:** Records completed transfers into `settlements`, recomputes net balances and remaining payments immediately, supports Undo (`T-01`–`T-03`), shows nested pairwise owe breakdowns, and toggles settled-up members.
+- [x] **Filter & Search Expenses + View-As Perspective:** Filter by member (`U-03`, `U-04`, `M-12`), category, or search query; inspect month-grouped ledger rows with category icons; and switch `"View as <Member>"` to see per-expense `lent` / `borrowed` status.
+- [x] **Permanent Immutable Activity Log:** Every member addition/removal, expense create/delete, settlement record/undo, group creation, and group reset is logged permanently in `expense_splitter_activity_v1` with search & type filters and zero delete/clear actions.
+- [x] **Responsive Desktop & Mobile Layout:** Responsive multi-view layout verified cleanly across desktop (`1280×800`), mobile (`375×812`), and narrow (`320×568`) viewports with zero horizontal overflow.
 
 ## Architecture Overview
 
 ```text
-├── index.html                  # Semantic HTML shell, warning banner, custom <dialog> modal
+├── index.html                  # Multi-view web shell, mobile bottom dock, composer & reset <dialog>s
 ├── styles/
-│   └── main.css                # CSS variables, warm monochrome theme, responsive breakpoints
+│   └── main.css                # RupeeSync warm cream/peach/indigo design system & responsive breakpoints
 ├── src/
-│   ├── main.js                 # App bootstrap wiring store <-> UI controllers
+│   ├── main.js                 # Hash-synced view router & store <-> controller bootstrap
 │   ├── core/                   # 100% pure domain logic (zero DOM or localStorage access)
 │   │   ├── money.js            # Integer paise/bps parsing, formatting, Equal & Hamilton splits
 │   │   ├── validators.js       # Member, expense, split, and removal validation rules
-│   │   ├── balances.js         # Total paid, share, net balance & zero-sum invariant check
+│   │   ├── balances.js         # Total paid, share, net balance, category aggregation & zero-sum check
 │   │   └── settleUp.js         # Exact Bitmask DP solver & transfer verification helper
 │   ├── state/                  # Observable state & persistence layer
-│   │   ├── storage.js          # Versioned localStorage schema guard & fault recovery
+│   │   ├── storage.js          # Versioned localStorage schema guard, multi-group & activity storage
 │   │   └── store.js            # Reactive pub-sub store with canonical state snapshots
-│   └── ui/                     # XSS-safe DOM controllers (textContent only)
-│       ├── domHelpers.js       # Element creation and inline role="alert" helpers
+│   └── ui/                     # XSS-safe DOM controllers (textContent & createElementNS only)
+│       ├── domHelpers.js       # Element creation, SVG icons, avatar badges & inline alerts
 │       ├── modalView.js        # Accessible Reset Group <dialog> modal controller
+│       ├── overviewView.js     # RupeeSync hero balance card, meters, payees strip & quick actions
 │       ├── memberView.js       # Group members chips, count badge, and inline validation
-│       ├── expenseFormView.js  # Add Expense form (Equal / Exact / Percentage modes)
+│       ├── expenseFormView.js  # Add Expense modal composer (Equal / Exact / Percentage modes)
+│       ├── friendsView.js      # Splitwise Friends breakdown cards & settled-up toggle
 │       ├── balanceView.js      # Balances table and ₹0 zero-sum footer
 │       ├── settleUpView.js     # Optimal payment rows, Mark as settled, and Undo list
-│       └── expenseListView.js  # Newest-first expense cards, member filter, and Delete
+│       ├── expenseListView.js  # Search, View-as ledger cards, month groups, and Delete
+│       ├── analyticsView.js    # Interactive SVG Category Donut Chart & Member Bar Chart
+│       ├── activityView.js     # Append-only Recent Activity log (search/filter, zero delete controls)
+│       └── groupView.js        # Multi-group switcher, new group creator & profile settings
 └── tests/
     ├── core.test.js            # Unit tests for Phase 1 & Phase 2 core modules
     └── state.test.js           # Store & mocked localStorage resilience tests

@@ -50,7 +50,7 @@ export function mountMemberView(container, countBadgeEl, store) {
 
   const minNotice = el('p', {
     className: 'notice-box',
-    text: `Add at least ${MIN_MEMBERS_FOR_EXPENSE} members to start adding expenses.`,
+    text: 'No members added yet.',
   });
 
   const chipList = el('div', {
@@ -81,7 +81,15 @@ export function mountMemberView(container, countBadgeEl, store) {
   function render(snapshot) {
     const members = snapshot.members;
     countBadgeEl.textContent = `${members.length} / ${MAX_MEMBERS} members`;
-    minNotice.hidden = members.length >= MIN_MEMBERS_FOR_EXPENSE;
+    if (members.length === 0) {
+      minNotice.textContent = 'No members yet — add people above to form your group.';
+      minNotice.hidden = false;
+    } else if (members.length < MIN_MEMBERS_FOR_EXPENSE) {
+      minNotice.textContent = 'Add 1 more member to unlock expense splitting.';
+      minNotice.hidden = false;
+    } else {
+      minNotice.hidden = true;
+    }
 
     const lockedIds = new Set();
     for (const exp of snapshot.expenses) {

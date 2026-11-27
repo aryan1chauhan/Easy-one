@@ -12,7 +12,7 @@ import {
   parseRupeesToPaise,
 } from '../core/money.js';
 import { MIN_MEMBERS_FOR_EXPENSE } from '../core/validators.js';
-import { clearInlineError, el, setChildren, setInlineError } from './domHelpers.js';
+import { clearInlineError, el, setChildren, setInlineError, svgIcon } from './domHelpers.js';
 
 const SPLIT_MODES = [
   { id: 'equal', label: 'Equal' },
@@ -20,13 +20,26 @@ const SPLIT_MODES = [
   { id: 'percentage', label: 'Percentage (%)' },
 ];
 
+const CATEGORY_OPTIONS = [
+  { id: 'auto', label: 'Auto-detect', icon: 'other' },
+  { id: 'food', label: 'Food', icon: 'food' },
+  { id: 'cab', label: 'Auto/Cab', icon: 'cab' },
+  { id: 'groceries', label: 'Groceries', icon: 'groceries' },
+  { id: 'utilities', label: 'Utilities', icon: 'utilities' },
+  { id: 'shopping', label: 'Shopping', icon: 'shopping' },
+  { id: 'other', label: 'Other', icon: 'other' },
+];
+
+const QUICK_AMOUNT_CHIPS = [50, 100, 500];
+
 /**
  * Mounts the Add Expense form controller.
  *
  * @param {HTMLElement} container
  * @param {ReturnType<import('../state/store.js').createStore>} store
+ * @param {{ onSuccess?: () => void }} [options]
  */
-export function mountExpenseFormView(container, store) {
+export function mountExpenseFormView(container, store, options = {}) {
   let currentSplitType = 'equal';
   let currentMembers = [];
   const knownMemberIds = new Set();
@@ -61,6 +74,11 @@ export function mountExpenseFormView(container, store) {
   titleField.append(titleLabel, titleInput);
 
   const amountField = el('div', { className: 'field' });
+  const heroAmountBox = el('div', { className: 'composer-amount-hero' });
+  const heroAmountLabel = el('span', { className: 'composer-amount-eyebrow', text: 'Amount' });
+  const heroAmountReadout = el('div', { className: 'composer-amount-display', text: '₹0' });
+  heroAmountBox.append(heroAmountLabel, heroAmountReadout);
+
   const amountLabel = el('label', {
     className: 'field-label',
     text: 'Amount (₹)',
@@ -71,11 +89,34 @@ export function mountExpenseFormView(container, store) {
       id: 'expense-amount-input',
       type: 'text',
       inputmode: 'decimal',
-      placeholder: 'e.g. 900 or 125.50',
+      placeholder: '0.00',
       autocomplete: 'off',
     },
   });
-  amountField.append(amountLabel, amountInput);
+
+  const quickChipsRow = el('div', { className: 'amount-quick-chips' });
+  const quickChipButtons = [];
+  for (const delta of QUICK_AMOUNT_CHIPS) {
+    const chip = el('button', {
+      className: 'amount-chip-btn',
+      text: `+₹${delta}`,
+      attrs: { type: 'button' },
+    });
+    chip.addEventListener('click', () => {
+      const parsed = parseRupeesToPaise(amountInput.value, { allowZero: true });
+      const currentPaise = parsed.valid ? parsed.paise : 0;
+      const nextPaise = currentPaise + delta * 100;
+      const whole = Math.floor(nextPaise / 100);
+      const frac = nextPaise % 100;
+      amountInput.value = frac === 0 ? String(whole) : `${whole}.${String(frac).padStart(2, '0')}`;
+      clearInlineError(errorEl);
+      syncAmountReadout();
+      updateLivePreview();
+    });
+    quickChipButtons.push(chip);
+    quickChipsRow.append(chip);
+  }
+  amountField.append(heroAmountBox, amountLabel, amountInput, quickChipsRow);
 
   const paidByField = el('div', { className: 'field' });
   const paidByLabel = el('label', {
@@ -85,6 +126,46 @@ export function mountExpenseFormView(container, store) {
   });
   const paidBySelect = el('select', { attrs: { id: 'expense-paid-by' } });
   paidByField.append(paidByLabel, paidBySelect);
+
+  const categoryField = el('div', { className: 'field' });
+  const categoryLabel = el('label', {
+    className: 'field-label',
+    text: 'Category',
+    attrs: { for: 'expense-category-select' },
+  });
+  const categorySelect = el('select', { className: 'sr-only-select', attrs: { id: 'expense-category-select' } });
+  const categoryGrid = el('div', { className: 'composer-category-grid', attrs: { role: 'group', 'aria-label': 'Expense category' } });
+  const categoryButtons = new Map();
+
+  function syncCategoryPills() {
+    for (const [catId, btn] of categoryButtons.entries()) {
+      const isSelected = categorySelect.value === catId;
+      btn.className = isSelected ? 'cat-pill-btn is-selected' : 'cat-pill-btn';
+      btn.setAttribute('aria-pressed', String(isSelected));
+    }
+  }
+
+  for (const cat of CATEGORY_OPTIONS) {
+    categorySelect.append(el('option', { text: cat.label, attrs: { value: cat.id } }));
+    const pillBtn = el('button', {
+      className: cat.id === 'auto' ? 'cat-pill-btn is-selected' : 'cat-pill-btn',
+      attrs: { type: 'button', 'aria-pressed': String(cat.id === 'auto') },
+    });
+    const iconSpan = el('span', { className: `icon-tile icon-tile-xs icon-tile-${cat.id === 'auto' ? 'utilities' : cat.id}` });
+    iconSpan.append(svgIcon(cat.icon, { size: 14 }));
+    pillBtn.append(iconSpan, el('span', { text: cat.label }));
+    pillBtn.addEventListener('click', () => {
+      categorySelect.value = cat.id;
+      syncCategoryPills();
+    });
+    categoryButtons.set(cat.id, pillBtn);
+    categoryGrid.append(pillBtn);
+  }
+  categorySelect.addEventListener('change', syncCategoryPills);
+  categoryField.append(categoryLabel, categorySelect, categoryGrid);
+
+  const metaPair = el('div', { className: 'field-pair' });
+  metaPair.append(paidByField);
 
   const modeField = el('div', { className: 'field' });
   const modeLabel = el('span', { className: 'field-label', text: 'Split mode' });
@@ -137,8 +218,13 @@ export function mountExpenseFormView(container, store) {
     attrs: { type: 'submit' },
   });
 
-  form.append(titleField, amountField, paidByField, modeField, splitField, errorEl, submitBtn);
+  form.append(amountField, titleField, categoryField, metaPair, modeField, splitField, errorEl, submitBtn);
   container.replaceChildren(noticeBox, form);
+
+  function syncAmountReadout() {
+    const parsed = parseRupeesToPaise(amountInput.value, { allowZero: true });
+    heroAmountReadout.textContent = parsed.valid ? formatRupees(parsed.paise) : '₹0';
+  }
 
   function syncTabButtons() {
     for (const [modeId, btn] of tabButtons.entries()) {
@@ -153,6 +239,12 @@ export function mountExpenseFormView(container, store) {
   }
 
   function updateLivePreview() {
+    if (currentMembers.length < MIN_MEMBERS_FOR_EXPENSE) {
+      previewBar.hidden = true;
+      return;
+    }
+    previewBar.hidden = false;
+
     const selectedIds = getSelectedIds();
     previewBar.className = 'split-preview-bar';
 
@@ -298,6 +390,9 @@ export function mountExpenseFormView(container, store) {
   function resetFieldsOnly() {
     titleInput.value = '';
     amountInput.value = '';
+    categorySelect.value = 'auto';
+    syncCategoryPills();
+    syncAmountReadout();
     shareInputsByMember.clear();
     checkedMemberIds.clear();
     for (const member of currentMembers) {
@@ -313,6 +408,7 @@ export function mountExpenseFormView(container, store) {
   titleInput.addEventListener('input', () => clearInlineError(errorEl));
   amountInput.addEventListener('input', () => {
     clearInlineError(errorEl);
+    syncAmountReadout();
     updateLivePreview();
   });
   paidBySelect.addEventListener('change', () => clearInlineError(errorEl));
@@ -329,6 +425,7 @@ export function mountExpenseFormView(container, store) {
       title: titleInput.value,
       amount: amountInput.value,
       paidBy: paidBySelect.value,
+      category: categorySelect.value === 'auto' ? undefined : categorySelect.value,
       splitType: currentSplitType,
       splitAmong: getSelectedIds(),
       shareValues,
@@ -340,7 +437,11 @@ export function mountExpenseFormView(container, store) {
     }
 
     resetFieldsOnly();
-    titleInput.focus();
+    if (typeof options.onSuccess === 'function') {
+      options.onSuccess();
+    } else {
+      titleInput.focus();
+    }
   });
 
   function render(snapshot) {
@@ -367,7 +468,14 @@ export function mountExpenseFormView(container, store) {
     titleInput.disabled = isLocked;
     amountInput.disabled = isLocked;
     paidBySelect.disabled = isLocked;
+    categorySelect.disabled = isLocked;
     submitBtn.disabled = isLocked;
+    for (const chip of quickChipButtons) {
+      chip.disabled = isLocked;
+    }
+    for (const pillBtn of categoryButtons.values()) {
+      pillBtn.disabled = isLocked;
+    }
     for (const btn of tabButtons.values()) {
       btn.disabled = isLocked;
     }

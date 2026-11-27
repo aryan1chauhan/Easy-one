@@ -77,7 +77,7 @@ export function mountBalanceView(container, totalBadgeEl) {
     const tfoot = el('tfoot');
     const footRow = el('tr');
     footRow.append(
-      el('td', { text: 'Group Total' }),
+      el('td', { text: 'Total' }),
       el('td', { className: 'num', text: formatRupees(snapshot.totalSpendPaise) }),
       el('td', { className: 'num', text: formatRupees(snapshot.totalSpendPaise) }),
       el('td', { className: 'num', text: formatRupees(snapshot.netSumPaise) })

@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import {
+  ACTIVITY_STORAGE_KEY,
   SCHEMA_VERSION,
   STORAGE_KEY,
   clearState,
   createInitialState,
+  loadActivity,
   loadState,
+  saveActivity,
   saveState,
 } from '../src/state/storage.js';
 import { createStore } from '../src/state/store.js';
@@ -432,6 +435,101 @@ test('M-11, M-12, U-03, P-06 & Snapshot Immutability: member deletion, filter re
   assert.equal(store.getState().members.length, 0);
   assert.equal(store.getState().activeMemberFilter, 'all');
   assert.equal(storage.getItem(STORAGE_KEY), null);
+});
+
+test('Immutable Activity Log, Search, Viewer Perspective & Non-Deletability Guarantees', () => {
+  const storage = createMemoryStorage();
+  const store = createStore({ storage });
+
+  // Store intentionally exposes zero activity-deletion or clear-activity APIs
+  assert.equal(store.clearActivity, undefined);
+  assert.equal(store.deleteActivity, undefined);
+
+  const rahul = store.addMember('Rahul').member;
+  const priya = store.addMember('Priya').member;
+  const exp = store.addExpense({
+    title: 'Airport Cab',
+    amount: '300',
+    paidBy: rahul.id,
+    splitType: 'equal',
+    splitAmong: [rahul.id, priya.id],
+  }).expense;
+  assert.equal(exp.category, 'cab');
+
+  const stl = store.markAsSettled(store.getDerivedState().settlementPlan[0]).settlement;
+  store.undoSettlement(stl.id);
+  store.deleteExpense(exp.id);
+
+  // Search query and viewer perspective work and reset on member removal / group reset
+  store.addExpense({
+    title: 'Dinner',
+    amount: '200',
+    paidBy: rahul.id,
+    splitType: 'equal',
+    splitAmong: [rahul.id, priya.id],
+  });
+  store.setSearchQuery('din');
+  assert.equal(store.getDerivedState().filteredExpenses.length, 1);
+  store.setSearchQuery('nomatch');
+  assert.equal(store.getDerivedState().filteredExpenses.length, 0);
+  store.setSearchQuery('');
+
+  store.setViewerMember(priya.id);
+  assert.equal(store.getState().viewerMemberId, priya.id);
+
+  const countBeforeReset = store.getDerivedState().activityFeed.length;
+  assert.ok(countBeforeReset >= 6);
+
+  // Resetting group appends a group_reset entry and NEVER deletes activity history
+  store.resetGroup();
+  const afterResetFeed = store.getDerivedState().activityFeed;
+  assert.equal(afterResetFeed.length, countBeforeReset + 1);
+  assert.equal(afterResetFeed[0].type, 'group_reset');
+  assert.equal(storage.getItem(STORAGE_KEY), null);
+  assert.ok(storage.getItem(ACTIVITY_STORAGE_KEY));
+
+  // Storage adapter refuses attempts to shrink or wipe existing activity entries
+  assert.equal(saveActivity([], storage).ok, false);
+  assert.equal(loadActivity(storage).activity.length, countBeforeReset + 1);
+});
+
+test('Multi-Group Switching, Group Naming, Category Filter & Reload Persistence', () => {
+  const storage = createMemoryStorage();
+  const s1 = createStore({ storage });
+
+  assert.equal(s1.setGroupName('Goa Trip').ok, true);
+  assert.equal(s1.getState().groupName, 'Goa Trip');
+
+  const rahul = s1.addMember('Rahul').member;
+  const priya = s1.addMember('Priya').member;
+  s1.addExpense({
+    title: 'Cab',
+    amount: '400',
+    paidBy: rahul.id,
+    splitType: 'equal',
+    splitAmong: [rahul.id, priya.id],
+    category: 'cab',
+  });
+
+  // Create second group and confirm clean isolation
+  const created = s1.createGroup('Flatmates');
+  assert.equal(created.ok, true);
+  assert.equal(s1.getState().groupName, 'Flatmates');
+  assert.equal(s1.getState().members.length, 0);
+
+  // Switch back to Goa Trip across fresh store reload
+  const s2 = createStore({ storage });
+  assert.equal(s2.getState().groupName, 'Flatmates');
+  const goaId = s2.getDerivedState().groups.find((g) => g.name === 'Goa Trip').id;
+  assert.equal(s2.switchGroup(goaId).ok, true);
+  assert.equal(s2.getState().members.length, 2);
+  assert.equal(s2.setCategoryFilter('groceries').ok, true);
+  assert.equal(s2.getDerivedState().filteredExpenses.length, 0);
+  assert.equal(s2.setCategoryFilter('cab').ok, true);
+  assert.equal(s2.getDerivedState().filteredExpenses.length, 1);
+
+  // Activity log holds group_created alongside Goa Trip actions
+  assert.ok(s2.getDerivedState().activityFeed.some((e) => e.type === 'group_created'));
 });
 
 console.log(`\nPhase 3 state & persistence tests complete: ${passed} passed, 0 failed.`);
